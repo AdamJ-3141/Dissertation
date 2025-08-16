@@ -3,9 +3,9 @@ import numpy as np
 from pool_simulation.constants import *
 
 COLOUR_MAP = {
-    0: (200, 30, 30),   # Red
+    0: (200, 30, 30),  # Red
     1: (240, 240, 40),  # Yellow
-    2: (20, 20, 20),    # Black
+    2: (20, 20, 20),  # Black
     3: (255, 255, 255)  # Cue ball
 }
 
@@ -24,25 +24,25 @@ class Renderer:
         pygame.display.set_caption("English Pool Simulation")
         self.clock = pygame.time.Clock()
 
-    def world_to_screen(self, pos: np.ndarray):
+    def world_to_screen(self, pos):
         """Convert world coordinates to pixel coordinates."""
-        # 3x3 affine transform matrix
-        M = np.array([
-            [self.width / 2 + self.scale, self.height / 2, self.width / 2],
-            [self.width / 2, self.height / 2 - self.scale, self.height / 2],
-            [0, 0, 1]
-        ], dtype=np.float64)
-
-        # homogeneous input vector
-        v = np.array([pos[0], pos[1], 1], dtype=np.float64)
-
-        # apply transform
-        screen_coords = M @ v
-        return screen_coords[0], screen_coords[1]
+        x, y = pos
+        sx = self.width // 2 + x * self.scale
+        sy = self.height // 2 - y * self.scale  # minus because pygame's Y grows downward
+        return sx, sy
 
     def draw_table(self):
         green = (20, 100, 20)
-        pygame.draw.rect(self.screen, green, (0, 0, self.width, self.height))
+        bl = self.world_to_screen((-self.sim.table_width / 2, -self.sim.table_height / 2))
+        tr = self.world_to_screen((self.sim.table_width / 2, self.sim.table_height / 2))
+
+        # unpack coords
+        x1, y1 = bl
+        x2, y2 = tr
+
+        # rect expects (left, top, width, height)
+        rect = (min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
+        pygame.draw.rect(self.screen, green, rect)
 
     def draw_balls(self):
         # Object balls
