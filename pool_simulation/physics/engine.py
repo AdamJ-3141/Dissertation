@@ -21,6 +21,9 @@ class Simulation:
         self.cb_vel = np.zeros((1, 2), dtype=np.float64)
         self.cb_ang_vel = np.zeros((1, 2), dtype=np.float64)
 
+        self.in_play = np.ones(n_balls, dtype=bool)
+        self.cb_in_play = True
+
         self.colours = np.zeros(n_balls, dtype=np.int8)
 
     def reset(self, ob_positions=None, cb_position=None, ob_colours=None):

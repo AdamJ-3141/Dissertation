@@ -38,6 +38,17 @@ def draw_circular_arc(surface, color, center, radius, start_angle, end_angle, wi
     pygame.draw.arc(surface, color, rect, start_angle, end_angle, width)
 
 
+def make_ball_sprite(radius, colour, render_scale):
+    big_r = int(radius * render_scale)
+    big_surf = pygame.Surface((2 * big_r, 2 * big_r), pygame.SRCALPHA)
+    pygame.draw.circle(big_surf, colour, (big_r, big_r), big_r)
+    # downscale once
+    small_surf = pygame.transform.smoothscale(
+        big_surf, (2 * radius, 2 * radius)
+    )
+    return small_surf
+
+
 class Renderer:
 
     def __init__(self, sim, scale=PIXELS_PER_METER):
@@ -53,6 +64,20 @@ class Renderer:
         self.table = self.draw_table()
         pygame.display.set_caption("English Pool Simulation")
         self.clock = pygame.time.Clock()
+
+        self.ball_sprites = {
+            c: make_ball_sprite(
+                int(self.sim.ob_radius * self.scale),
+                COLOUR_MAP[c],
+                self.render_scale
+            )
+            for c in [0, 1, 2]  # without cue ball
+        }
+        self.ball_sprites[3] = make_ball_sprite(
+                int(self.sim.cb_radius * self.scale),
+                COLOUR_MAP[3],
+                self.render_scale
+            )
 
     def world_to_screen(self, pos, screen_scale=1):
         """Convert world coordinates to pixel coordinates."""
@@ -217,30 +242,15 @@ class Renderer:
 
     def draw_balls(self):
 
-        def draw_ball(surface, p, r, c):
-            x, y = p
-            pygame.gfxdraw.filled_circle(surface, x, y, r, c)
-            pygame.gfxdraw.aacircle(surface, x, y, r, c)
-
-        def make_ball_sprite(radius, c):
-            surf = pygame.Surface((2 * radius, 2 * radius), pygame.SRCALPHA)
-            draw_ball(surf, (radius, radius), radius, c)
-            return surf
-
-        ball_sprites = {
-            c: make_ball_sprite(int(self.sim.ob_radius * self.scale), COLOUR_MAP[c])
-            for c in set(self.sim.colours) | {3}  # include cue ball
-        }
-
         for i in range(self.sim.n_balls):
             pos = self.world_to_screen(self.sim.positions[i])
-            rect = ball_sprites[self.sim.colours[i]].get_rect(center=pos)
-            self.screen.blit(ball_sprites[self.sim.colours[i]], rect)
+            rect = self.ball_sprites[self.sim.colours[i]].get_rect(center=pos)
+            self.screen.blit(self.ball_sprites[self.sim.colours[i]], rect)
 
         # cue ball
         pos = self.world_to_screen(self.sim.cb_pos[0])
-        rect = ball_sprites[3].get_rect(center=pos)
-        self.screen.blit(ball_sprites[3], rect)
+        rect = self.ball_sprites[3].get_rect(center=pos)
+        self.screen.blit(self.ball_sprites[3], rect)
 
     def render(self, fps=60):
         """Draw the current frame."""
