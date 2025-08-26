@@ -60,6 +60,10 @@ class Simulation:
         Resets the table to break position
         :return:
         """
+        try:
+            assert self.n_balls == 15
+        except AssertionError:
+            raise AttributeError("Number of balls must be 15 to reset to break.")
         self.reset(
             np.array([
                 [BLACK_SPOT_X - 2*SQRT_3_INCHES, 0],
