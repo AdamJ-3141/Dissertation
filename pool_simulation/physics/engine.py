@@ -16,12 +16,10 @@ class Simulation:
         # State arrays
         self.positions = np.zeros((n_balls, 2), dtype=np.float64)
         self.velocities = np.zeros((n_balls, 2), dtype=np.float64)
-        self.spins = np.zeros((n_balls, 2), dtype=np.float64)
-        self.angular_velocities = np.zeros(n_balls, dtype=np.float64)
+        self.angular_velocities = np.zeros((n_balls, 2), dtype=np.float64)
         self.cb_pos = np.zeros((1, 2), dtype=np.float64)
-        self.cb_spin = np.zeros((1, 2), dtype=np.float64)
-        self.cb_ang_vel = np.zeros(1, dtype=np.float64)
         self.cb_vel = np.zeros((1, 2), dtype=np.float64)
+        self.cb_ang_vel = np.zeros((1, 2), dtype=np.float64)
 
         self.colours = np.zeros(n_balls, dtype=np.int8)
 
@@ -49,11 +47,9 @@ class Simulation:
         else:
             self.cb_pos[:] = cb_position
 
-        self.spins.fill(0.0)
         self.angular_velocities.fill(0.0)
         self.velocities.fill(0.0)
         self.cb_vel.fill(0.0)
-        self.cb_spin.fill(0.0)
         self.cb_ang_vel.fill(0.0)
 
     def reset_to_break(self):
