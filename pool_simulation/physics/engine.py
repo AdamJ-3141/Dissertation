@@ -7,6 +7,7 @@ class Simulation:
                  cb_radius=CUE_BALL_RADIUS, cb_mass=CUE_BALL_MASS,
                  ob_radius=OBJECT_BALL_RADIUS, ob_mass=OBJECT_BALL_MASS,
                  mu_s=MU_S, mu_r=MU_R):
+
         self.n_balls = n_balls
         self.table_width = table_width
         self.table_height = table_height
@@ -27,6 +28,7 @@ class Simulation:
         self.radii = np.array([cb_radius] + [ob_radius] * n_balls, dtype=np.float64)
         self.in_play = np.ones(1 + n_balls, dtype=bool)
         self.colours = np.zeros(1 + n_balls, dtype=np.int8)
+        self.ball_states = np.zeros(1 + n_balls, dtype=str)
 
         # internal simulation clock
         self.time = 0.0
@@ -90,17 +92,50 @@ class Simulation:
         return
 
     def time_step(self, dt):
-        z_hat = np.array([0, 0, 1])
+        self.time += dt
+        self.positions += self.velocities * dt
         omega_x = self.angular[:, 0]
         omega_y = self.angular[:, 1]
         cross_term = self.radii[:, None] * np.column_stack((-omega_y, omega_x))
         self.sliding_velocities = self.velocities + cross_term
         norms = np.linalg.norm(self.sliding_velocities, axis=1, keepdims=True)
-        u_hat = np.divide(self.sliding_velocities,
-                          norms,
-                          out=np.zeros_like(self.sliding_velocities),
-                          where=norms != 0)
-        acc = -self.mu_s * self.g * u_hat
-        u_hat_3d = np.column_stack((u_hat, np.zeros(len(u_hat))))
-        ang_acc = (5.0 / (2.0 * self.radii[:, None])) * self.mu_s * self.g * np.column_stack(
-            (-u_hat[:, 1], u_hat[:, 0], np.zeros(len(self.radii))))
+        speeds = np.linalg.norm(self.velocities, axis=1)
+        ang_speeds = np.linalg.norm(self.angular, axis=1)
+        stopped_mask = np.logical_and(speeds == 0, ang_speeds == 0)
+        stopping_mask = ((speeds > 0) & (speeds < 0.001) & (ang_speeds > 0) & (ang_speeds < 0.01))
+        sliding_mask = np.logical_and(norms.squeeze() > 0.01, np.logical_not(stopped_mask))
+        rolling_mask = np.logical_and(norms.squeeze() <= 0.01, np.logical_not(stopped_mask))
+
+        conditions = [sliding_mask, rolling_mask, stopping_mask, stopped_mask]
+        choices = ["Sliding", "Rolling", "Stopping", "Stopped"]
+        self.ball_states = np.select(conditions, choices)
+
+        # --- Handle Sliding --- #
+        if np.any(sliding_mask):
+            s_sliding_velocities = self.sliding_velocities[sliding_mask]
+            s_norms = norms[sliding_mask]
+            s_radii = self.radii[sliding_mask]
+            u_hat = s_sliding_velocities / s_norms
+            acc = -self.mu_s * self.g * u_hat
+            ang_acc = (5.0 / (2.0 * s_radii[:, None])) * self.mu_s * self.g * np.column_stack(
+                (-u_hat[:, 1], u_hat[:, 0], np.zeros(len(s_radii))))
+            self.velocities[sliding_mask] += acc * dt
+            self.angular[sliding_mask] += ang_acc * dt
+
+        # --- Handle Rolling --- #
+        if np.any(rolling_mask):
+            r_velocities = self.velocities[rolling_mask]
+            r_radii = self.radii[rolling_mask]
+            r_speeds = np.linalg.norm(r_velocities, axis=1, keepdims=True)
+            r_directions = r_velocities / r_speeds
+            deceleration = - (5 / 7) * self.mu_r * self.g
+            acc = deceleration * r_directions
+            self.velocities[rolling_mask] += acc * dt
+            new_velocities = self.velocities[rolling_mask]
+            cross_product_v = np.column_stack((-new_velocities[:, 1], new_velocities[:, 0], np.zeros(len(r_radii))))
+            self.angular[rolling_mask] = cross_product_v / r_radii[:, None]
+
+        # --- Handle Stopping --- #
+        if np.any(stopping_mask):
+            self.velocities[stopping_mask] = np.zeros(self.velocities[stopping_mask].shape)
+            self.angular[stopping_mask] = np.zeros(self.angular[stopping_mask].shape)
