@@ -5,18 +5,17 @@ from constants import *
 
 # ---- TEMPORARY SHOT SETTINGS ----
 # Cue ball initial velocity (m/s)
-CUE_VELOCITY_INIT = np.array([11, 0])   # x and y components
+CUE_VELOCITY_INIT = np.array([1, 0])   # x and y components
 # Cue ball angular velocity (rad/s)
-CUE_ANGULAR_INIT = np.array([90.0, -130.0, 0.0])  # ωx, ωy, ωz
+CUE_ANGULAR_INIT = np.array([0.0, -160.0, 0.0])  # ωx, ωy, ωz
 
 FPS = 60
 FRAME_TIME = 1.0 / FPS
-DT = 0.0005
 
 
 def main():
     sim = Simulation(
-        n_balls=2)
+        n_balls=2, dt_max=FRAME_TIME/2)
 
     sim.reset(
         np.array([
@@ -43,8 +42,8 @@ def main():
                     shot_played = True
 
         # advance physics
-        sim.time_step(DT)
-        accum_render_time += DT
+        dt = sim.time_step()
+        accum_render_time += dt
 
         # render only when enough sim time has passed
         if accum_render_time >= FRAME_TIME:
