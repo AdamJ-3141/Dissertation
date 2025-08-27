@@ -242,15 +242,10 @@ class Renderer:
 
     def draw_balls(self):
 
-        for i in range(self.sim.n_balls):
+        for i in range(self.sim.n_balls + 1):
             pos = self.world_to_screen(self.sim.positions[i])
             rect = self.ball_sprites[self.sim.colours[i]].get_rect(center=pos)
             self.screen.blit(self.ball_sprites[self.sim.colours[i]], rect)
-
-        # cue ball
-        pos = self.world_to_screen(self.sim.cb_pos[0])
-        rect = self.ball_sprites[3].get_rect(center=pos)
-        self.screen.blit(self.ball_sprites[3], rect)
 
     def render(self, fps=60):
         """Draw the current frame."""
