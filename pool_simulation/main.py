@@ -12,15 +12,7 @@ CUE_ANGULAR_INIT = np.array([0.0, 0.0, 20.0])  # ωx, ωy, ωz
 
 def main():
     sim = Simulation(
-        n_balls=2,
-        table_width=TABLE_WIDTH,
-        table_height=TABLE_HEIGHT,
-        cb_radius=CUE_BALL_RADIUS,
-        cb_mass=CUE_BALL_MASS,
-        ob_radius=OBJECT_BALL_RADIUS,
-        ob_mass=OBJECT_BALL_MASS,
-        mu_s=MU_S,
-        mu_r=MU_R)
+        n_balls=2)
 
     sim.reset(
         np.array([
@@ -42,11 +34,9 @@ def main():
                 if event.key == pygame.K_SPACE and not shot_played:
                     # apply initial velocity + spin to cue ball
                     sim.velocities[0] = CUE_VELOCITY_INIT.copy()
-                    sim.angular_velocities[0] = CUE_ANGULAR_INIT.copy()
-                    shot_played = True
+                    sim.angular[0] = CUE_ANGULAR_INIT.copy()
 
-        if shot_played:
-            pass
+        sim.time_step(0.001)
 
         renderer.render()
 

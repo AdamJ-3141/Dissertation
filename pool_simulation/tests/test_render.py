@@ -1,11 +1,11 @@
 from pool_simulation.render.pygame_renderer import Renderer
 from pool_simulation.constants import *
-from pool_simulation.tests.dummy_sim import DummySim
+from pool_simulation.physics import Simulation
 import numpy as np
 
 
 def test_coordinate_transform():
-    sim = DummySim()
+    sim = Simulation()
     scale = PIXELS_PER_METER
     renderer = Renderer(sim, scale=scale)
 
