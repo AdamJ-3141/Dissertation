@@ -44,12 +44,9 @@ def main():
                     sim.velocities[0] = CUE_VELOCITY_INIT.copy()
                     sim.angular_velocities[0] = CUE_ANGULAR_INIT.copy()
                     shot_played = True
-                    # schedule first events
-                    sim.schedule_initial_events()
 
         if shot_played:
-            # advance simulation by events
-            sim.step_to_next_event()
+            pass
 
         renderer.render()
 
