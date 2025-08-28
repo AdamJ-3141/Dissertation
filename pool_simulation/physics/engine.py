@@ -2,15 +2,136 @@ import numpy as np
 from pool_simulation.constants import *
 
 
+# Cushion Collisions:
+def point_to_segment_dist(points, p0, p1):
+    v = np.array(p1) - np.array(p0)
+    w = points - np.array(p0)
+    t = np.clip((w @ v) / (v @ v), 0, 1)
+    proj = p0 + t[:, None] * v
+    return np.linalg.norm(points - proj, axis=1)
+
+
+def point_to_circle_dist(points, center, radius):
+    rel = points - np.array(center)
+    d = np.linalg.norm(rel, axis=1)
+    return np.abs(d - radius)
+
+
+def cushion_candidate_mask(points, radii, line_segments, circles):
+    """
+    points: (N,2) array of ball centers
+    radii: (N,) array of ball radii
+    line_segments: list of (p0, p1) tuples
+    circles: list of (cx, cy, r) tuples
+
+    Returns:
+        mask: (N,) boolean, True if ball collides
+        collision_idx: (N,) int, index of shape (line or circle) giving min distance
+                       lines are indexed 0..len(line_segments)-1
+                       circles are indexed len(line_segments)..len(line_segments)+len(circles)-1
+    """
+    N = points.shape[0]
+    dists = np.full(N, np.inf)
+    collision_idx = np.full(N, -1, dtype=int)  # -1 means no collision
+
+    # check lines
+    for idx, (p0, p1) in enumerate(line_segments):
+        d = point_to_segment_dist(points, np.array(p0), np.array(p1))
+        mask = d < dists
+        dists[mask] = d[mask]
+        collision_idx[mask] = idx
+
+    # check circles
+    offset = len(line_segments)
+    for idx, (cx, cy, r) in enumerate(circles):
+        d = point_to_circle_dist(points, np.array([cx, cy]), r)
+        mask = d < dists
+        dists[mask] = d[mask]
+        collision_idx[mask] = offset + idx
+
+    mask = dists <= radii
+    return mask, collision_idx
+
+
+def cushion_contact_points(points, velocities, radii, line_segments, circles, collision_idx, dt):
+    """
+    points: (N,2) ball positions
+    velocities: (N,2) ball velocities
+    radii: (N,)
+    collision_idx: (N,) index of shape hit (from cushion_candidate_mask_with_index)
+    dt: timestep
+
+    Returns:
+        contact_points: (N,2)
+        normals: (N,2)
+        tangents: (N,2)
+        dt_contact: (N,) time fraction to collision
+    """
+    N = len(points)
+    contact_points = np.zeros_like(points)
+    normals = np.zeros_like(points)
+    tangents = np.zeros_like(points)
+    dt_contact = np.zeros(N)
+
+    line_count = len(line_segments)
+
+    # Separate masks for lines and circles
+    line_mask = collision_idx < line_count
+    circle_mask = collision_idx >= line_count
+
+    # --- Lines ---
+    if np.any(line_mask):
+        idxs = collision_idx[line_mask]
+        p0s = np.array([line_segments[i][0] for i in idxs])
+        p1s = np.array([line_segments[i][1] for i in idxs])
+        pts = points[line_mask]
+
+        v = p1s - p0s
+        w = pts - p0s
+        t = np.clip(np.sum(w * v, axis=1) / np.sum(v*v, axis=1), 0, 1)
+        proj = p0s + (t[:, None] * v)
+
+        contact_points[line_mask] = proj
+        line_dirs = v / np.linalg.norm(v, axis=1)[:, None]
+        tangents[line_mask] = line_dirs
+        normals[line_mask] = np.column_stack([-line_dirs[:,1], line_dirs[:,0]])
+
+    # --- Circles ---
+    if np.any(circle_mask):
+        idxs = collision_idx[circle_mask] - line_count
+        centers = np.array([circles[i][:2] for i in idxs])
+        radii_circ = np.array([circles[i][2] for i in idxs])
+        pts = points[circle_mask]
+
+        vecs = pts - centers
+        norms = np.linalg.norm(vecs, axis=1)[:, None]
+        n_vecs = vecs / norms
+
+        contact_points[circle_mask] = centers + n_vecs * radii_circ[:, None]
+        normals[circle_mask] = n_vecs
+        tangents[circle_mask] = np.column_stack([-n_vecs[:,1], n_vecs[:,0]])
+
+    # --- Interpolation along velocity ---
+    # Distance from point to cushion at start
+    dist_old = np.linalg.norm(points - contact_points, axis=1) - radii
+    speed = np.linalg.norm(velocities, axis=1)
+    # Avoid division by zero
+    alpha = np.where(speed > 0, dist_old / speed / dt, 0)
+    alpha = np.clip(alpha, 0, 1)
+    dt_contact = alpha * dt
+
+    return contact_points, normals, tangents, dt_contact
+
+
 class Simulation:
-    def __init__(self, n_balls=15, table_width=TABLE_WIDTH, table_height=TABLE_HEIGHT,
+    def __init__(self, n_balls=15,
                  cb_radius=CUE_BALL_RADIUS, cb_mass=CUE_BALL_MASS,
                  ob_radius=OBJECT_BALL_RADIUS, ob_mass=OBJECT_BALL_MASS,
-                 mu_s=MU_S, mu_r=MU_R, dt_max=1.0/60):
+                 mu_s=MU_S, mu_r=MU_R, dt_max=1.0 / 60):
 
         self.n_balls = n_balls
-        self.table_width = table_width
-        self.table_height = table_height
+        self.table_width = TABLE_WIDTH
+        self.table_height = TABLE_HEIGHT
         self.cb_mass = cb_mass
         self.cb_radius = cb_radius
         self.ob_mass = ob_mass
@@ -105,12 +226,78 @@ class Simulation:
             dt = self.dt_max
         self.time += dt
 
-        p_prev = self.positions.copy()
         self.positions += self.velocities * dt
 
         # --- Check if a ball ends up inside the cushion --- #
-        # Filter balls outside (playing_area - radius)
-        # Check if ball is in a pocket jaw
+        # Broad Check: Filter balls outside (playing_area - radius)
+        # Check if ball is in a cushion
+        half_w = self.table_width / 2 - self.radii
+        half_h = self.table_height / 2 - self.radii
+        broad_mask = (np.abs(self.positions[:, 0]) > half_w * 0.98) | \
+                     (np.abs(self.positions[:, 1]) > half_h * 0.98)
+
+        candidates = np.where(broad_mask)[0]
+
+        line_segments = [
+            ((0.1346, 0.4572), (0.8147, 0.4572)),
+            ((0.868785228149406, 0.474264), (0.924562160209359, 0.5162)),
+            ((0.0499787766576, 0.5162122073954), (0.078405956002, 0.4826978086535)),
+            ((0.1346, -0.4572), (0.8147, -0.4572)),
+            ((0.868785228149406, -0.474264), (0.924562160209359, -0.5162)),
+            ((0.0499787766576, -0.5162122073954), (0.078405956002, -0.4826978086535)),
+            ((-0.1346, 0.4572), (-0.8147, 0.4572)),
+            ((-0.868785228149406, 0.474264), (-0.924562160209359, 0.5162)),
+            ((-0.0499787766576, 0.5162122073954), (-0.078405956002, 0.4826978086535)),
+            ((-0.1346, -0.4572), (-0.8147, -0.4572)),
+            ((-0.868785228149406, -0.474264), (-0.924562160209359, -0.5162)),
+            ((-0.0499787766576, -0.5162122073954), (-0.078405956002, -0.4826978086535)),
+            ((0.9144, -0.3575), (0.9144, 0.3575)),
+            ((0.932464, 0.41158522815), (0.9744, 0.467362160211)),
+            ((0.932464, -0.41158522815), (0.9744, -0.467362160211)),
+            ((-0.9144, -0.3575), (-0.9144, 0.3575)),
+            ((-0.932464, 0.41158522815), (-0.9744, 0.467362160211)),
+            ((-0.932464, -0.41158522815), (-0.9744, -0.467362160211))
+        ]
+
+        circles = [(1.0044, 0.3575, 0.09), (1.0044, -0.3575, 0.09),
+                   (-1.0044, 0.3575, 0.09), (-1.0044, -0.3575, 0.09),
+                   (0.8147, 0.5472, 0.09), (0.1346, 0.5322, 0.075),
+                   (0.8147, -0.5472, 0.09), (0.1346, -0.5322, 0.075),
+                   (-0.8147, 0.5472, 0.09), (-0.1346, 0.5322, 0.075),
+                   (-0.8147, -0.5472, 0.09), (-0.1346, -0.5322, 0.075)]
+
+        mask, collision_idx = cushion_candidate_mask(
+            self.positions[candidates],
+            self.radii[candidates],
+            line_segments,
+            circles
+        )
+
+        colliding_balls = candidates[mask]
+        contact_pts, normals, tangents, dt_contact = cushion_contact_points(
+            self.positions[colliding_balls],
+            self.velocities[colliding_balls],
+            self.radii[colliding_balls],
+            line_segments,
+            circles,
+            collision_idx[mask],
+            dt
+        )
+
+        # Move to contact point
+        pos_contact = self.positions[colliding_balls] + self.velocities[colliding_balls] * dt_contact[:, None]
+
+        # Reflect velocity along normal
+        v_norm = np.sum(self.velocities[colliding_balls] * normals, axis=1)[:, None] * normals
+        vel_reflected = self.velocities[colliding_balls] - 2 * v_norm
+
+        # Continue motion for remaining dt
+        dt_remain = dt - dt_contact
+        pos_final = pos_contact + vel_reflected * dt_remain[:, None]
+
+        # Update balls
+        self.positions[colliding_balls] = pos_final
+        self.velocities[colliding_balls] = vel_reflected
 
         # --- Movement Calculations --- #
         omega_x = self.angular[:, 0]
@@ -118,7 +305,6 @@ class Simulation:
         cross_term = self.radii[:, None] * np.column_stack((-omega_y, omega_x))
         self.sliding_velocities = self.velocities + cross_term
         norms = np.linalg.norm(self.sliding_velocities, axis=1, keepdims=True)
-        print(norms)
         speeds = np.linalg.norm(self.velocities, axis=1)
         ang_speeds = np.linalg.norm(self.angular, axis=1)
         stopped_mask = np.logical_and(speeds == 0, ang_speeds == 0)
@@ -129,7 +315,7 @@ class Simulation:
         conditions = [sliding_mask, rolling_mask, stopping_mask, stopped_mask]
         choices = ["Sliding", "Rolling", "Stopping", "Stopped"]
         self.ball_states = np.select(conditions, choices)
-        print(self.ball_states)
+        # print(self.ball_states)
         # --- Handle Sliding --- #
         if np.any(sliding_mask):
             s_sliding_velocities = self.sliding_velocities[sliding_mask]

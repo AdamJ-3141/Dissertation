@@ -1,15 +1,16 @@
 import pygame
+import numpy as np
 from physics.engine import Simulation
 from render.pygame_renderer import Renderer
 from constants import *
 
 # ---- TEMPORARY SHOT SETTINGS ----
 # Cue ball initial velocity (m/s)
-CUE_VELOCITY_INIT = np.array([1, 0])   # x and y components
+CUE_VELOCITY_INIT = np.array([2, -0.2])   # x and y components
 # Cue ball angular velocity (rad/s)
-CUE_ANGULAR_INIT = np.array([0.0, -160.0, 0.0])  # ωx, ωy, ωz
+CUE_ANGULAR_INIT = np.array([0.0, 0.0, 0.0])  # ωx, ωy, ωz
 
-FPS = 60
+FPS = 90
 FRAME_TIME = 1.0 / FPS
 
 
@@ -19,9 +20,9 @@ def main():
 
     sim.reset(
         np.array([
-            [-0.547, 0],
+            [0.22, -0.333],
             [BLACK_SPOT_X, 0],
-            [0, 0.05]
+            [0.25, 0.05]
         ]),
         np.array([3, 2, 0]), )
     renderer = Renderer(sim)

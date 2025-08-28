@@ -2,7 +2,6 @@ import pygame
 import pygame.gfxdraw
 import numpy as np
 from pool_simulation.constants import *
-import time
 
 COLOUR_MAP = {
     0: (200, 30, 30),  # Red Ball
