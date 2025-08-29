@@ -202,8 +202,8 @@ class Simulation:
 
                 v = p1s - p0s
                 w = pts - p0s
-                t = np.clip(np.sum(w * v, axis=1) / np.sum(v * v, axis=1), 0, 1)
-                proj = p0s + (t[:, None] * v)
+                tau = np.clip(np.sum(w * v, axis=1) / np.sum(v * v, axis=1), 0, 1)
+                proj = p0s + (tau[:, None] * v)
 
                 contact_points[line_mask] = proj
                 line_dirs = v / np.linalg.norm(v, axis=1)[:, None]
@@ -393,8 +393,6 @@ class Simulation:
                                                                self.velocities[idx[keep], 0])) / self.radii[
                                                   idx[keep], None]
 
-        return dt
-
     def time_step(self):
 
         v_max = np.max(np.linalg.norm(self.velocities, axis=1))
@@ -412,6 +410,8 @@ class Simulation:
         self.handle_pocketed_balls(dt)
         self.handle_cushions(dt)
         self.handle_state_updates(dt)
+
+        return dt
 
     def time_step_state_only(self, dt):
 
