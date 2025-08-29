@@ -208,13 +208,13 @@ class Renderer:
 
         # Pockets
         for signy in [1, -1]:
-            cx, cy = self.world_to_screen((0, signy * 0.507),
+            cx, cy = self.world_to_screen((MIDDLE_POCKET_X, signy * MIDDLE_POCKET_Y),
                                           screen_scale=self.render_scale)
             pygame.draw.circle(table_surface, WORLD_COLOURS["Black"],
                                (int(cx), int(cy)),
                                int(POCKET_RADIUS * self.scale * self.render_scale))
             for signx in [1, -1]:
-                cx, cy = self.world_to_screen((signx * 0.9441, signy * 0.4869),
+                cx, cy = self.world_to_screen((signx * CORNER_POCKET_X, signy * CORNER_POCKET_Y),
                                               screen_scale=self.render_scale)
                 pygame.draw.circle(table_surface, WORLD_COLOURS["Black"],
                                    (int(cx), int(cy)),
@@ -240,11 +240,11 @@ class Renderer:
         return table_small
 
     def draw_balls(self):
-
         for i in range(self.sim.n_balls + 1):
-            pos = self.world_to_screen(self.sim.positions[i])
-            rect = self.ball_sprites[self.sim.colours[i]].get_rect(center=pos)
-            self.screen.blit(self.ball_sprites[self.sim.colours[i]], rect)
+            if self.sim.in_play[i]:
+                pos = self.world_to_screen(self.sim.positions[i])
+                rect = self.ball_sprites[self.sim.colours[i]].get_rect(center=pos)
+                self.screen.blit(self.ball_sprites[self.sim.colours[i]], rect)
 
     def render(self, fps=60):
         """Draw the current frame."""
