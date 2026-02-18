@@ -207,8 +207,15 @@ class Simulation:
 
                 contact_points[line_mask] = proj
                 line_dirs = v / np.linalg.norm(v, axis=1)[:, None]
+                # candidate normals (rotated tangent)
+                n_cand = np.column_stack([-line_dirs[:, 1], line_dirs[:, 0]])
+                # fix orientation so normals point inward
+                midpoints = (p0s + p1s) / 2
+                to_center = -midpoints
+                flip = np.sum(n_cand * to_center, axis=1) < 0
+                n_cand[flip] *= -1
                 t[line_mask] = line_dirs
-                n[line_mask] = np.column_stack([-line_dirs[:, 1], line_dirs[:, 0]])
+                n[line_mask] = n_cand
 
             # --- Circles ---
             if np.any(circle_mask):
@@ -292,20 +299,147 @@ class Simulation:
             dt
         )
 
-        # Move to contact point
-        pos_contact = self.positions[colliding_balls] + self.velocities[colliding_balls] * dt_contact[:, None]
+        print(f"v = {self.velocities[0]}\nw = {self.angular[0]}")
+        if colliding_balls.size > 0:
+            print("\n---------------------| COLLISION |---------------------\n")
 
-        # Reflect velocity along normal
-        v_norm = np.sum(self.velocities[colliding_balls] * normals, axis=1)[:, None] * normals
-        vel_reflected = self.velocities[colliding_balls] - 2 * v_norm
+            # Move to contact positions
+            pos_contact = self.positions[colliding_balls] + self.velocities[colliding_balls] * dt_contact[:, None]
 
-        # Continue motion for remaining dt
-        dt_remain = dt - dt_contact
-        pos_final = pos_contact + vel_reflected * dt_remain[:, None]
+            vel_in = self.velocities[colliding_balls].copy()  # (K,2)
+            w_in = self.angular[colliding_balls].copy()  # (K,3)
+            R_arr = self.radii[colliding_balls]  # (K,)
+            M_arr = np.where(colliding_balls == 0, self.cb_mass, self.ob_mass)  # (K,)
 
-        # Update balls
-        self.positions[colliding_balls] = pos_final
-        self.velocities[colliding_balls] = vel_reflected
+            vel_out = np.zeros_like(vel_in)
+            w_out = np.zeros_like(w_in)
+
+            # rail tilt constants (Mathavan geometry)
+            sin_th = 2.0 / 5.0
+            cos_th = np.sqrt(max(0.0, 1.0 - sin_th * sin_th))
+            k = np.array([0.0, 0.0, 1.0], dtype=float)
+
+            e = E_CUSHION
+            mu = MU_W
+
+            for local_i, ball_idx in enumerate(colliding_balls):
+                v2 = vel_in[local_i]  # 2D linear vel
+                w3 = w_in[local_i].copy()  # 3D angular vel (x,y,z)
+                n2 = normals[local_i]  # 2D cushion normal (xy)
+                t2 = tangents[local_i]  # 2D tangent (xy)
+                R = float(R_arr[local_i])
+                M = float(M_arr[local_i])
+
+                # Build 3D tangent T, in-table normal A and tilted normal Z'
+                T = np.array([t2[0], t2[1], 0.0], dtype=float)
+                T_norm = np.linalg.norm(T)
+                if T_norm < 1e-12:
+                    T = np.array([1.0, 0.0, 0.0], dtype=float)
+                    T_norm = 1.0
+                T /= T_norm
+
+                A = np.cross(T, k)
+                A_norm = np.linalg.norm(A)
+                if A_norm < 1e-12:
+                    # degenerate: choose x axis as fallback
+                    A = np.array([1.0, 0.0, 0.0], dtype=float)
+                else:
+                    A /= A_norm
+
+                Zp = cos_th * A + sin_th * k
+                Zp /= (np.linalg.norm(Zp) + 1e-15)
+
+                Yp = np.cross(Zp, T)
+                Yp_norm = np.linalg.norm(Yp)
+                if Yp_norm < 1e-12:
+                    Yp = np.array([0.0, 1.0, 0.0], dtype=float)
+                else:
+                    Yp /= Yp_norm
+
+                # enforce inward-pointing cushion normal
+                table_center = np.array([0.0, 0.0, 0.0])
+                if np.dot(Zp[:2], (table_center[:2] - self.positions[ball_idx])) < 0:
+                    Zp = -Zp
+
+                # contact arms (center -> contact point). Convention: r_I = -R * Zp
+                r_I = -R * Zp
+                r_C = -R * k
+
+                # Compose 3D pre-impact contact velocity
+                v3 = np.array([v2[0], v2[1], 0.0], dtype=float)
+                u_I0 = v3 + np.cross(w3, r_I)
+
+                # approach speed along Z' (should be negative when approaching)
+                vrel_n0 = float(np.dot(u_I0, Zp))
+
+                # If not approaching, skip collision for this ball
+                if vrel_n0 >= 0.0:
+                    vel_out[local_i] = v2
+                    w_out[local_i] = w3
+                    # ensure center is at contact pos to avoid weird re-detection
+                    self.positions[ball_idx] = pos_contact[local_i]
+                    continue
+
+                # Normal impulse (single-step restitution)
+                Jn_scalar = -(1.0 + e) * M * vrel_n0  # positive magnitude
+                Jn = Jn_scalar * Zp  # 3D vector
+
+                # Tangential slip in T–Y' plane
+                uI_T = float(np.dot(u_I0, T))
+                uI_Yp = float(np.dot(u_I0, Yp))
+                slip_vec = uI_T * T + uI_Yp * Yp  # 3D slip vector in the cushion tangent plane
+                slip_mag = np.linalg.norm(slip_vec)
+
+                # Required tangential impulse to zero slip (single-step for a solid sphere)
+                # Jt_req = - (2/7) * M * slip_vec
+                alpha = 0.2  # tuning factor <1 to avoid over-wide rebound
+                Jt_req = -alpha * (2.0 / 7.0) * M * slip_vec
+
+                # Coulomb clamp: |Jt| <= mu * |Jn_scalar|
+                Jt_limit = mu * abs(Jn_scalar)
+                Jt_norm = np.linalg.norm(Jt_req)
+                if Jt_norm > 1e-15 and Jt_norm > Jt_limit:
+                    Jt = Jt_req * (Jt_limit / Jt_norm)
+                else:
+                    Jt = Jt_req
+
+                # Apply impulses to linear and angular velocity
+                dv = (Jn + Jt) / M
+                dL = np.cross(r_I, Jt)  # normal impulse about r_I produces no torque (r_I || Zp)
+                I_scalar = (2.0 / 5.0) * M * (R ** 2)
+                dw = dL / (I_scalar + 1e-15)
+
+                v3_after = v3 + dv
+                w3_after = w3 + dw
+
+                vel_out[local_i] = v3_after[:2]
+                w_out[local_i] = w3_after
+
+                # push the center slightly out of the cushion along XY projection of Z'
+                zpxy = Zp[:2]
+                zpxy_norm = np.linalg.norm(zpxy)
+                if zpxy_norm > 1e-12:
+                    n_xy = zpxy / zpxy_norm
+                else:
+                    flat_n = np.array([-t2[1], t2[0]], dtype=float)
+                    fnorm = np.linalg.norm(flat_n)
+                    if fnorm < 1e-12:
+                        n_xy = np.array([1.0, 0.0], dtype=float)
+                    else:
+                        n_xy = flat_n / fnorm
+
+                # place center at contact point + radius along n_xy (prevents overlap)
+                self.positions[ball_idx] = contact_pts[local_i] + n_xy * R
+
+            # Advance for the remaining dt using the post-impact velocities
+            dt_remain = dt - dt_contact
+            # make sure shapes align for broadcasting
+            pos_final = self.positions[colliding_balls] + vel_out * dt_remain[:, None]
+
+            # Commit results
+            self.positions[colliding_balls] = pos_final
+            self.velocities[colliding_balls] = vel_out
+            self.angular[colliding_balls] = w_out
 
     def handle_state_updates(self, dt):
         # --- Analytic movement update (from Jia–Mason–Erdmann) ---

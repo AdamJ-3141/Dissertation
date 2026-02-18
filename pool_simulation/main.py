@@ -6,7 +6,7 @@ from constants import *
 
 # ---- TEMPORARY SHOT SETTINGS ----
 # Cue ball initial velocity (m/s)
-CUE_VELOCITY_INIT = np.array([2, -0.2])   # x and y components
+CUE_VELOCITY_INIT = np.array([1, 0])   # x and y components
 # Cue ball angular velocity (rad/s)
 CUE_ANGULAR_INIT = np.array([0.0, 0.0, 0.0])  # ωx, ωy, ωz
 
@@ -16,21 +16,15 @@ FRAME_TIME = 1.0 / FPS
 
 def main():
     sim = Simulation(
-        n_balls=7, dt_max=FRAME_TIME)
+        n_balls=1, dt_max=FRAME_TIME)
 
     sim.reset(
         positions=np.array([
-            [-0.86, 0],
-            [-0.88, 0.3],
-            [-0.88, 0.2],
-            [-0.88, 0.1],
-            [-0.88, 0.0],
-            [-0.88, -0.1],
-            [-0.88, -0.2],
-            [-0.88, -0.3],
+            [-0.6, 0.3],
+            [-0.6, 0.2],
         ]),
-        colours=np.array([3, 0, 0, 0, 0, 0, 0, 0]),
-        in_play=np.array([False, True, True, True, True, True, True, True])
+        colours=np.array([3, 0]),
+        in_play=np.array([False, True])
     )
     renderer = Renderer(sim)
 
@@ -48,13 +42,7 @@ def main():
                     # sim.velocities[0] = CUE_VELOCITY_INIT.copy()
                     # sim.angular[0] = CUE_ANGULAR_INIT.copy()
                     sim.velocities[1:] = np.array([
-                        [0.1, 0],
-                        [0.2, 0],
-                        [0.3, 0],
-                        [0.4, 0],
-                        [0.5, 0],
-                        [0.6, 0],
-                        [3, 0],
+                        [2, 0],
                     ])
                     shot_played = True
 
