@@ -1,5 +1,7 @@
 import numpy as np
 from pool_simulation.constants import *
+from pool_simulation.physics.event import Event
+import heapq
 
 
 class Simulation:
@@ -18,8 +20,6 @@ class Simulation:
         self.mu_s = mu_s  # sliding friction coefficient
         self.mu_r = mu_r  # rolling friction coefficient
 
-        self.g = 9.81
-
         # State arrays
         self.positions = np.zeros((1 + n_balls, 2), dtype=np.float64)
         self.velocities = np.zeros((1 + n_balls, 2), dtype=np.float64)
@@ -28,15 +28,9 @@ class Simulation:
         self.radii = np.array([cb_radius] + [ob_radius] * n_balls, dtype=np.float64)
         self.in_play = np.ones(1 + n_balls, dtype=bool)
         self.colours = np.zeros(1 + n_balls, dtype=np.int8)
-        self.ball_states = np.zeros(1 + n_balls, dtype=str)
+        self.ball_states = np.zeros(1 + n_balls, dtype=str)  # SLIDING | ROLLING | STOPPED | POCKETED
 
-        # internal simulation clock
-        self.time = 0.0
-        self.dt_max = dt_max
-
-        # per-ball phase trackers
-        self.phase = ["sliding"] * (1 + n_balls)  # or "rolling" or "stopped"
-        self.next_event_time = np.zeros(1 + n_balls)
+        self.event_queue = []
 
     def reset(self, positions=None, colours=None, in_play=None):
         """Reset to given positions/velocities, or random if None."""
@@ -97,459 +91,30 @@ class Simulation:
         )
         return
 
-    def handle_pocketed_balls(self, dt):
-        # Pocket positions
-        corner_pocket = np.array([CORNER_POCKET_X, CORNER_POCKET_Y])
-        middle_pocket = np.array([MIDDLE_POCKET_X, MIDDLE_POCKET_Y])
+    def push_event(self, event):
+        heapq.heappush(self.event_queue, event)
 
-        # Distance to the nearest pocket
-        dist_corner = np.linalg.norm(np.abs(self.positions) - corner_pocket, axis=1)
-        dist_middle = np.linalg.norm(np.abs(self.positions) - middle_pocket, axis=1)
-        dist_to_pocket = np.minimum(dist_corner, dist_middle)
+    def pop_event(self):
+        return heapq.heappop(self.event_queue)
 
-        # A ball is in play if it's outside any pocket radius
-        self.in_play = (dist_to_pocket >= POCKET_RADIUS) & self.in_play
-
-        # Update positions of in-play balls
-        self.positions[self.in_play] += self.velocities[self.in_play] * dt
-
-        # Handle pocketed balls
-        not_in_play = ~self.in_play
-        self.positions[not_in_play] = np.random.randint(4, 100, size=(not_in_play.sum(), 2))
-        self.velocities[not_in_play] = 0.0
-        self.angular[not_in_play] = 0.0
-
-    def handle_cushions(self, dt):
-
-        # Cushion Collisions:
-        def point_to_segment_dist(points, p0, p1):
-            v = np.array(p1) - np.array(p0)
-            w = points - np.array(p0)
-            t = np.clip((w @ v) / (v @ v), 0, 1)
-            proj = p0 + t[:, None] * v
-            return np.linalg.norm(points - proj, axis=1)
-
-        def point_to_circle_dist(points, center, radius):
-            rel = points - np.array(center)
-            d = np.linalg.norm(rel, axis=1)
-            return np.abs(d - radius)
-
-        def cushion_candidate_mask(points, radii, segs, circs):
-            """
-            points: (N,2) array of ball centers
-            radii: (N,) array of ball radii
-            line_segments: list of (p0, p1) tuples
-            circles: list of (cx, cy, r) tuples
-
-            Returns:
-                mask: (N,) boolean, True if ball collides
-                collision_idx: (N,) int, index of shape (line or circle) giving min distance
-                               lines are indexed 0..len(line_segments)-1
-                               circles are indexed len(line_segments)..len(line_segments)+len(circles)-1
-            """
-            N = points.shape[0]
-            dists = np.full(N, np.inf)
-            coll_idx = np.full(N, -1, dtype=int)  # -1 means no collision
-
-            # check lines
-            for idx, (p0, p1) in enumerate(segs):
-                d = point_to_segment_dist(points, np.array(p0), np.array(p1))
-                m = d < dists
-                dists[m] = d[m]
-                coll_idx[m] = idx
-
-            # check circles
-            offset = len(segs)
-            for idx, (cx, cy, r) in enumerate(circs):
-                d = point_to_circle_dist(points, np.array([cx, cy]), r)
-                m = d < dists
-                dists[m] = d[m]
-                coll_idx[m] = offset + idx
-
-            m = dists <= radii
-            return m, coll_idx
-
-        def cushion_contact_points(points, velocities, radii, segs, circs, coll_idx, delta):
-            """
-            points: (N,2) ball positions
-            velocities: (N,2) ball velocities
-            radii: (N,)
-            collision_idx: (N,) index of shape hit (from cushion_candidate_mask_with_index)
-            dt: timestep
-
-            Returns:
-                contact_points: (N,2)
-                normals: (N,2)
-                tangents: (N,2)
-                dt_contact: (N,) time fraction to collision
-            """
-            contact_points = np.zeros_like(points)
-            n = np.zeros_like(points)
-            t = np.zeros_like(points)
-
-            line_count = len(segs)
-
-            # Separate masks for lines and circles
-            line_mask = coll_idx < line_count
-            circle_mask = coll_idx >= line_count
-
-            # --- Lines ---
-            if np.any(line_mask):
-                idxs = coll_idx[line_mask]
-                p0s = np.array([segs[i][0] for i in idxs])
-                p1s = np.array([segs[i][1] for i in idxs])
-                pts = points[line_mask]
-
-                v = p1s - p0s
-                w = pts - p0s
-                tau = np.clip(np.sum(w * v, axis=1) / np.sum(v * v, axis=1), 0, 1)
-                proj = p0s + (tau[:, None] * v)
-
-                contact_points[line_mask] = proj
-                line_dirs = v / np.linalg.norm(v, axis=1)[:, None]
-                # candidate normals (rotated tangent)
-                n_cand = np.column_stack([-line_dirs[:, 1], line_dirs[:, 0]])
-                # fix orientation so normals point inward
-                midpoints = (p0s + p1s) / 2
-                to_center = -midpoints
-                flip = np.sum(n_cand * to_center, axis=1) < 0
-                n_cand[flip] *= -1
-                t[line_mask] = line_dirs
-                n[line_mask] = n_cand
-
-            # --- Circles ---
-            if np.any(circle_mask):
-                idxs = coll_idx[circle_mask] - line_count
-                centers = np.array([circs[i][:2] for i in idxs])
-                radii_circ = np.array([circs[i][2] for i in idxs])
-                pts = points[circle_mask]
-
-                vecs = pts - centers
-                norms = np.linalg.norm(vecs, axis=1)[:, None]
-                n_vecs = vecs / norms
-
-                contact_points[circle_mask] = centers + n_vecs * radii_circ[:, None]
-                n[circle_mask] = n_vecs
-                t[circle_mask] = np.column_stack([-n_vecs[:, 1], n_vecs[:, 0]])
-
-            # --- Interpolation along velocity ---
-            # Distance from point to cushion at start
-            dist_old = np.linalg.norm(points - contact_points, axis=1) - radii
-            speed = np.linalg.norm(velocities, axis=1)
-            # Avoid division by zero
-            alpha = np.where(speed > 0, dist_old / speed / delta, 0)
-            alpha = np.clip(alpha, 0, 1)
-            dt_c = alpha * delta
-
-            return contact_points, n, t, dt_c
-
-        # --- Check if a ball ends up inside the cushion --- #
-        # Broad Check: Filter balls outside (playing_area - radius)
-        # Check if ball is in a cushion
-        half_w = self.table_width / 2 - self.radii
-        half_h = self.table_height / 2 - self.radii
-        broad_mask = (np.abs(self.positions[:, 0]) > half_w * 0.98) | \
-                     (np.abs(self.positions[:, 1]) > half_h * 0.98)
-
-        candidates = np.where(broad_mask)[0]
-
-        line_segments = [
-            ((0.1346, 0.4572), (0.8147, 0.4572)),
-            ((0.868785228149406, 0.474264), (0.924562160209359, 0.5162)),
-            ((0.0499787766576, 0.5162122073954), (0.078405956002, 0.4826978086535)),
-            ((0.1346, -0.4572), (0.8147, -0.4572)),
-            ((0.868785228149406, -0.474264), (0.924562160209359, -0.5162)),
-            ((0.0499787766576, -0.5162122073954), (0.078405956002, -0.4826978086535)),
-            ((-0.1346, 0.4572), (-0.8147, 0.4572)),
-            ((-0.868785228149406, 0.474264), (-0.924562160209359, 0.5162)),
-            ((-0.0499787766576, 0.5162122073954), (-0.078405956002, 0.4826978086535)),
-            ((-0.1346, -0.4572), (-0.8147, -0.4572)),
-            ((-0.868785228149406, -0.474264), (-0.924562160209359, -0.5162)),
-            ((-0.0499787766576, -0.5162122073954), (-0.078405956002, -0.4826978086535)),
-            ((0.9144, -0.3575), (0.9144, 0.3575)),
-            ((0.932464, 0.41158522815), (0.9744, 0.467362160211)),
-            ((0.932464, -0.41158522815), (0.9744, -0.467362160211)),
-            ((-0.9144, -0.3575), (-0.9144, 0.3575)),
-            ((-0.932464, 0.41158522815), (-0.9744, 0.467362160211)),
-            ((-0.932464, -0.41158522815), (-0.9744, -0.467362160211))
-        ]
-
-        circles = [(1.0044, 0.3575, 0.09), (1.0044, -0.3575, 0.09),
-                   (-1.0044, 0.3575, 0.09), (-1.0044, -0.3575, 0.09),
-                   (0.8147, 0.5472, 0.09), (0.1346, 0.5322, 0.075),
-                   (0.8147, -0.5472, 0.09), (0.1346, -0.5322, 0.075),
-                   (-0.8147, 0.5472, 0.09), (-0.1346, 0.5322, 0.075),
-                   (-0.8147, -0.5472, 0.09), (-0.1346, -0.5322, 0.075)]
-
-        mask, collision_idx = cushion_candidate_mask(
-            self.positions[candidates],
-            self.radii[candidates],
-            line_segments,
-            circles
+    def predict_slide_roll_events(self):
+        # u = v + R z-hat x omega
+        cross_term = self.radii[:, None] * np.column_stack(
+            (-self.angular[:, 1], self.angular[:, 0])
         )
+        u = self.velocities + cross_term
+        t1 = 2/7 * np.linalg.norm(u, axis=1, keepdims=True)/(MU_S*g)
+        self.push_event(Event())
+        return
 
-        colliding_balls = candidates[mask]
-        contact_pts, normals, tangents, dt_contact = cushion_contact_points(
-            self.positions[colliding_balls],
-            self.velocities[colliding_balls],
-            self.radii[colliding_balls],
-            line_segments,
-            circles,
-            collision_idx[mask],
-            dt
-        )
+    def predict_roll_stop_events(self):
+        return
 
-        print(f"v = {self.velocities[0]}\nw = {self.angular[0]}")
-        if colliding_balls.size > 0:
-            print("\n---------------------| COLLISION |---------------------\n")
+    def predict_ball_collision_events(self):
+        return
 
-            # Move to contact positions
-            pos_contact = self.positions[colliding_balls] + self.velocities[colliding_balls] * dt_contact[:, None]
+    def predict_cushion_collision_events(self):
+        return
 
-            vel_in = self.velocities[colliding_balls].copy()  # (K,2)
-            w_in = self.angular[colliding_balls].copy()  # (K,3)
-            R_arr = self.radii[colliding_balls]  # (K,)
-            M_arr = np.where(colliding_balls == 0, self.cb_mass, self.ob_mass)  # (K,)
-
-            vel_out = np.zeros_like(vel_in)
-            w_out = np.zeros_like(w_in)
-
-            # rail tilt constants (Mathavan geometry)
-            sin_th = 2.0 / 5.0
-            cos_th = np.sqrt(max(0.0, 1.0 - sin_th * sin_th))
-            k = np.array([0.0, 0.0, 1.0], dtype=float)
-
-            e = E_CUSHION
-            mu = MU_W
-
-            for local_i, ball_idx in enumerate(colliding_balls):
-                v2 = vel_in[local_i]  # 2D linear vel
-                w3 = w_in[local_i].copy()  # 3D angular vel (x,y,z)
-                n2 = normals[local_i]  # 2D cushion normal (xy)
-                t2 = tangents[local_i]  # 2D tangent (xy)
-                R = float(R_arr[local_i])
-                M = float(M_arr[local_i])
-
-                # Build 3D tangent T, in-table normal A and tilted normal Z'
-                T = np.array([t2[0], t2[1], 0.0], dtype=float)
-                T_norm = np.linalg.norm(T)
-                if T_norm < 1e-12:
-                    T = np.array([1.0, 0.0, 0.0], dtype=float)
-                    T_norm = 1.0
-                T /= T_norm
-
-                A = np.cross(T, k)
-                A_norm = np.linalg.norm(A)
-                if A_norm < 1e-12:
-                    # degenerate: choose x axis as fallback
-                    A = np.array([1.0, 0.0, 0.0], dtype=float)
-                else:
-                    A /= A_norm
-
-                Zp = cos_th * A + sin_th * k
-                Zp /= (np.linalg.norm(Zp) + 1e-15)
-
-                Yp = np.cross(Zp, T)
-                Yp_norm = np.linalg.norm(Yp)
-                if Yp_norm < 1e-12:
-                    Yp = np.array([0.0, 1.0, 0.0], dtype=float)
-                else:
-                    Yp /= Yp_norm
-
-                # enforce inward-pointing cushion normal
-                table_center = np.array([0.0, 0.0, 0.0])
-                if np.dot(Zp[:2], (table_center[:2] - self.positions[ball_idx])) < 0:
-                    Zp = -Zp
-
-                # contact arms (center -> contact point). Convention: r_I = -R * Zp
-                r_I = -R * Zp
-                r_C = -R * k
-
-                # Compose 3D pre-impact contact velocity
-                v3 = np.array([v2[0], v2[1], 0.0], dtype=float)
-                u_I0 = v3 + np.cross(w3, r_I)
-
-                # approach speed along Z' (should be negative when approaching)
-                vrel_n0 = float(np.dot(u_I0, Zp))
-
-                # If not approaching, skip collision for this ball
-                if vrel_n0 >= 0.0:
-                    vel_out[local_i] = v2
-                    w_out[local_i] = w3
-                    # ensure center is at contact pos to avoid weird re-detection
-                    self.positions[ball_idx] = pos_contact[local_i]
-                    continue
-
-                # Normal impulse (single-step restitution)
-                Jn_scalar = -(1.0 + e) * M * vrel_n0  # positive magnitude
-                Jn = Jn_scalar * Zp  # 3D vector
-
-                # Tangential slip in T–Y' plane
-                uI_T = float(np.dot(u_I0, T))
-                uI_Yp = float(np.dot(u_I0, Yp))
-                slip_vec = uI_T * T + uI_Yp * Yp  # 3D slip vector in the cushion tangent plane
-                slip_mag = np.linalg.norm(slip_vec)
-
-                # Required tangential impulse to zero slip (single-step for a solid sphere)
-                # Jt_req = - (2/7) * M * slip_vec
-                alpha = 0.2  # tuning factor <1 to avoid over-wide rebound
-                Jt_req = -alpha * (2.0 / 7.0) * M * slip_vec
-
-                # Coulomb clamp: |Jt| <= mu * |Jn_scalar|
-                Jt_limit = mu * abs(Jn_scalar)
-                Jt_norm = np.linalg.norm(Jt_req)
-                if Jt_norm > 1e-15 and Jt_norm > Jt_limit:
-                    Jt = Jt_req * (Jt_limit / Jt_norm)
-                else:
-                    Jt = Jt_req
-
-                # Apply impulses to linear and angular velocity
-                dv = (Jn + Jt) / M
-                dL = np.cross(r_I, Jt)  # normal impulse about r_I produces no torque (r_I || Zp)
-                I_scalar = (2.0 / 5.0) * M * (R ** 2)
-                dw = dL / (I_scalar + 1e-15)
-
-                v3_after = v3 + dv
-                w3_after = w3 + dw
-
-                vel_out[local_i] = v3_after[:2]
-                w_out[local_i] = w3_after
-
-                # push the center slightly out of the cushion along XY projection of Z'
-                zpxy = Zp[:2]
-                zpxy_norm = np.linalg.norm(zpxy)
-                if zpxy_norm > 1e-12:
-                    n_xy = zpxy / zpxy_norm
-                else:
-                    flat_n = np.array([-t2[1], t2[0]], dtype=float)
-                    fnorm = np.linalg.norm(flat_n)
-                    if fnorm < 1e-12:
-                        n_xy = np.array([1.0, 0.0], dtype=float)
-                    else:
-                        n_xy = flat_n / fnorm
-
-                # place center at contact point + radius along n_xy (prevents overlap)
-                self.positions[ball_idx] = contact_pts[local_i] + n_xy * R
-
-            # Advance for the remaining dt using the post-impact velocities
-            dt_remain = dt - dt_contact
-            # make sure shapes align for broadcasting
-            pos_final = self.positions[colliding_balls] + vel_out * dt_remain[:, None]
-
-            # Commit results
-            self.positions[colliding_balls] = pos_final
-            self.velocities[colliding_balls] = vel_out
-            self.angular[colliding_balls] = w_out
-
-    def handle_state_updates(self, dt):
-        # --- Analytic movement update (from Jia–Mason–Erdmann) ---
-        # Slip velocity
-        cross_term = self.radii[:, None] * np.column_stack((-self.angular[:, 1], self.angular[:, 0]))
-        u0 = self.velocities + cross_term
-        s0 = np.linalg.norm(u0, axis=1)
-        eps = 1e-12
-        uhat = np.zeros_like(u0)
-        nonzero = s0 > eps
-        uhat[nonzero] = u0[nonzero][:, :2] / s0[nonzero, None]
-
-        # time until slip ends
-        t_stop = np.full_like(s0, np.inf, dtype=float)
-        if self.mu_s > 0:
-            t_stop[nonzero] = (2.0 / 7.0) * s0[nonzero] / (self.mu_s * self.g)
-
-        # classify
-        mask_slide = nonzero & (dt <= t_stop)
-        mask_trans = nonzero & (dt > t_stop)
-        mask_roll = ~nonzero
-
-        # --- Sliding whole step ---
-        if np.any(mask_slide):
-            idx = np.where(mask_slide)[0]
-            self.velocities[idx] -= (self.mu_s * self.g * dt) * uhat[idx]
-            ang_factor = (5.0 * self.mu_s * self.g * dt) / (2.0 * self.radii[idx])
-            Juhat = np.column_stack((-uhat[idx, 1], uhat[idx, 0]))
-            self.angular[idx, :2] += ang_factor[:, None] * Juhat
-
-        # --- Transition from sliding to rolling ---
-        if np.any(mask_trans):
-            idx = np.where(mask_trans)[0]
-            t_rem = dt - t_stop[idx]
-
-            # v1 at slip end (eq. 11)
-            v1 = (5.0 / 7.0) * self.velocities[idx] - (2.0 / 7.0) * np.column_stack(
-                (-self.radii[idx] * self.angular[idx, 1], self.radii[idx] * self.angular[idx, 0])
-            )
-            w1_xy = np.column_stack((-v1[:, 1], v1[:, 0])) / self.radii[idx][:, None]
-
-            # roll remainder
-            decel = (5.0 / 7.0) * self.mu_r * self.g
-            dv_roll = decel * t_rem
-            speeds = np.linalg.norm(v1, axis=1)
-            vhat = np.zeros_like(v1)
-            nz = speeds > eps
-            if np.any(nz):
-                vhat[nz] = v1[nz] / speeds[nz, None]
-
-            stop = dv_roll >= speeds
-            keep = ~stop
-
-            v_final = np.zeros_like(v1)
-            w_final = np.zeros_like(w1_xy)
-
-            if np.any(stop):
-                v_final[stop] = 0
-                w_final[stop] = 0
-            if np.any(keep):
-                v_final[keep] = v1[keep] - dv_roll[keep, None] * vhat[keep]
-                w_final[keep] = np.column_stack((-v_final[keep, 1], v_final[keep, 0])) / self.radii[idx[keep], None]
-
-            self.velocities[idx] = v_final
-            self.angular[idx, :2] = w_final
-
-        # --- Already rolling ---
-        if np.any(mask_roll):
-            idx = np.where(mask_roll)[0]
-            speeds = np.linalg.norm(self.velocities[idx], axis=1)
-            vhat = np.zeros_like(self.velocities[idx])
-            nz = speeds > eps
-            if np.any(nz):
-                vhat[nz] = self.velocities[idx][nz] / speeds[nz, None]
-            decel = (5.0 / 7.0) * self.mu_r * self.g * dt
-            stop = decel >= speeds
-            keep = ~stop
-
-            if np.any(stop):
-                self.velocities[idx[stop]] = 0
-                self.angular[idx[stop]] = 0
-            if np.any(keep):
-                self.velocities[idx[keep]] -= decel * vhat[keep]
-                self.angular[idx[keep], :2] = np.column_stack((-self.velocities[idx[keep], 1],
-                                                               self.velocities[idx[keep], 0])) / self.radii[
-                                                  idx[keep], None]
-
-    def time_step(self):
-
-        v_max = np.max(np.linalg.norm(self.velocities, axis=1))
-        w_max = np.max(self.radii * np.linalg.norm(self.angular[:, :2], axis=1))
-        speed_scale = max(v_max, w_max)
-
-        dx_target = 0.001
-        if speed_scale > 0:
-            dt = min(self.dt_max, dx_target / speed_scale)
-        else:
-            dt = self.dt_max
-
-        self.time += dt
-
-        self.handle_pocketed_balls(dt)
-        self.handle_cushions(dt)
-        self.handle_state_updates(dt)
-
-        return dt
-
-    def time_step_state_only(self, dt):
-
-        self.time += dt
-        # Update positions of in-play balls
-        self.positions[self.in_play] += self.velocities[self.in_play] * dt
-        self.handle_state_updates(dt)
+    def predict_pot_events(self):
+        return

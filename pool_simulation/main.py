@@ -56,5 +56,23 @@ def main():
             accum_render_time -= FRAME_TIME
 
 
+def headless_test():
+    sim = Simulation(n_balls=1, dt_max=FRAME_TIME)
+    sim.reset(
+        positions=np.array([
+            [-1, -1],
+            [0, 0],
+        ]),
+        colours=np.array([3, 0]),
+        in_play=np.array([False, True])
+    )
+    sim.velocities[1] = np.array([
+        [1, 1],
+    ])
+    sim.angular[1] = np.array([[130, -60, 0]])
+    print(sim.predict_slide_roll_events())
+
+
+
 if __name__ == "__main__":
-    main()
+    headless_test()
