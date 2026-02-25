@@ -20,6 +20,10 @@ MU_S = 0.21
 MU_W = 0.14
 MU_R = 0.015
 MU_SP = 0.044
-MU_C = 0.1
-E_CUSHION = 0.98
+MU_B = 0.1
+E_C = 0.85  # Cushion coefficient of restitution
+MU_C = 0.2  # Cushion friction coefficient (grippiness of the cloth on the rubber)
+K_N = 1e3  # Cushion normal spring stiffness
+BETA_N = 1.0  # Normal mass-matrix coefficient
+BETA_T = 3.5  # Tangential mass-matrix coefficient (1 + mR^2/I = 1 + 2.5 = 3.5)
 g = 9.80665

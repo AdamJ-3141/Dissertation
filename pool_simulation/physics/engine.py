@@ -1,6 +1,8 @@
 import numpy as np
+import numpy.typing as npt
 from pool_simulation.constants import *
-from pool_simulation.physics.event import Event
+from event import Event
+from stronge_compliant import resolve_collinear_compliant_frictional_inelastic_collision
 import heapq
 
 
@@ -8,7 +10,8 @@ class Simulation:
     def __init__(self, n_balls=15,
                  cb_radius=CUE_BALL_RADIUS, cb_mass=CUE_BALL_MASS,
                  ob_radius=OBJECT_BALL_RADIUS, ob_mass=OBJECT_BALL_MASS,
-                 mu_s=MU_S, mu_r=MU_R, mu_sp = MU_SP, mu_c = MU_C):
+                 mu_s=MU_S, mu_r=MU_R, mu_sp = MU_SP, mu_b = MU_B, e_c = E_C,
+                 mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T):
 
         self.n_balls = n_balls
         self.table_width = TABLE_WIDTH
@@ -20,7 +23,23 @@ class Simulation:
         self.mu_s = mu_s  # sliding friction coefficient
         self.mu_r = mu_r  # rolling friction coefficient
         self.mu_sp = mu_sp  # spinning friction coefficient
-        self.mu_c = mu_c
+        self.mu_b = mu_b
+
+        # For cushion collisions (stronge)
+        self.e_c = e_c  # Cushion coefficient of restitution
+        self.mu_c = mu_c  # Cushion friction coefficient (grippiness of the cloth on the rubber)
+        self.k_n = k_n  # Cushion normal spring stiffness
+        self.beta_n = beta_n  # Normal mass-matrix coefficient
+        self.beta_t = beta_t  # Tangential mass-matrix coefficient (1 + mR^2/I = 1 + 2.5 = 3.5)
+
+        # Table Geometry
+        self.line_segments = [
+            ((-0.9144, -0.4572), (-0.9144, 0.4572)),
+            ((-0.9144, 0.4572), (0.9144, 0.4572)),
+            ((0.9144, 0.4572), (0.9144, -0.4572)),
+            ((0.9144, -0.4572), (-0.9144, -0.4572))
+        ]
+        self.circles = []
 
         # State arrays
         self.positions = np.zeros((1 + n_balls, 2), dtype=np.float64)
@@ -122,23 +141,27 @@ class Simulation:
         while self.event_queue:
             event = self.pop_event()
 
+            # Check if ball i's trajectory has changed
             if event.version_i != self.ball_versions[event.i]:
-                continue  # Stale event, pop the next one
+                continue
 
-            if event.j is not None and event.version_j != self.ball_versions[event.j]:
-                continue  # Stale event, pop the next one
+            # Check if ball j's trajectory has changed
+            if isinstance(event.j, int):
+                if event.version_j != self.ball_versions[event.j]:
+                    continue
 
+            # If the versions match, the event is valid
             return event
 
-        return None  # Queue is empty
+        return None
 
-    def propel_ball(self, ball_mask, velocities, angulars):
+    def propel_ball(self, ball_mask: npt.NDArray[np.bool_], velocities, angulars):
         self.velocities[ball_mask] = velocities
         self.angular[ball_mask] = angulars
         self.ball_states[ball_mask] = "SLIDING"
         self.ball_versions[ball_mask] += 1
 
-    def predict_slide_roll_events(self, ball_mask):
+    def predict_slide_roll_events(self, ball_mask: npt.NDArray[np.bool_]):
         sliding_mask = self.ball_states == "SLIDING"  # Sliding mask should eliminate any stopped balls
 
         # u = v + R z-hat x omega
@@ -163,11 +186,11 @@ class Simulation:
         mask = np.zeros(1 + self.n_balls, dtype=bool)
         mask[i] = True
         self.predict_roll_stop_events(mask)
-        # self.predict_ball_collision_events(mask)
-        # self.predict_cushion_collision_events(mask)
+        self.predict_ball_collision_events(mask)
+        self.predict_cushion_collision_events(mask)
         # self.predict_pot_events(mask)
 
-    def predict_roll_stop_events(self, ball_mask):
+    def predict_roll_stop_events(self, ball_mask: npt.NDArray[np.bool_]):
 
         rolling_mask = self.ball_states == "ROLLING"
         v_norm = np.linalg.norm(self.velocities, axis=1)
@@ -191,8 +214,8 @@ class Simulation:
         self.ball_versions[i] += 1
         mask = np.zeros(1 + self.n_balls, dtype=bool)
         mask[i] = True
-        # self.predict_ball_collision_events(mask)
-        # self.predict_cushion_collision_events(mask)
+        self.predict_ball_collision_events(mask)
+        self.predict_cushion_collision_events(mask)
         # self.predict_pot_events(mask)
 
     def _get_acceleration(self, i):
@@ -263,7 +286,7 @@ class Simulation:
             )
             self.push_event(event)
 
-    def predict_ball_collision_events(self, ball_mask):
+    def predict_ball_collision_events(self, ball_mask: npt.NDArray[np.bool_]):
 
         next_event_time = self.event_queue[0].t if self.event_queue else self.time + 5.0
         max_dt = next_event_time - self.time
@@ -363,9 +386,9 @@ class Simulation:
             j_t_max = v_rel_t_norm / ((1.0 / m1) + (1.0 / m2) + (r1 ** 2 / I1) + (r2 ** 2 / I2))
 
             # Crown's threshold: Does it grip, or does it slip?
-            if j_t_max > self.mu_c * j_n:
+            if j_t_max > self.mu_b * j_n:
                 # Slip occurs throughout the collision
-                j_t = self.mu_c * j_n
+                j_t = self.mu_b * j_n
             else:
                 # The surfaces grip/lock together tangentially
                 j_t = j_t_max
@@ -401,10 +424,211 @@ class Simulation:
 
         self.predict_slide_roll_events(mask)
         self.predict_ball_collision_events(mask)
-    def predict_cushion_collision_events(self):
-        return
+        self.predict_cushion_collision_events(mask)
 
-    def predict_pot_events(self):
+    def predict_cushion_collision_events(self, ball_mask):
+        active_mask = np.asarray(self.in_play & (self.ball_states != "STOPPED") & ball_mask, dtype=bool)
+        valid_indices = np.where(active_mask)[0]
+
+        for i in valid_indices:
+            P0 = self.positions[i]
+            V0 = self.velocities[i]
+            A = self._get_acceleration(i)
+            R = self.radii[i]
+
+            valid_times = []
+
+            # 1. Check Line Segments (No distance filter!)
+            for idx, (p1, p2) in enumerate(self.line_segments):
+                P1 = np.array(p1)
+                P2 = np.array(p2)
+
+                D = P2 - P1
+                L = np.linalg.norm(D)
+                if L < 1e-8: continue
+                u_hat = D / L
+                n_hat = np.array([-u_hat[1], u_hat[0]])
+
+                a_n = np.dot(A, n_hat)
+                v_n = np.dot(V0, n_hat)
+                p_n = np.dot(P0 - P1, n_hat)
+
+                for offset in [R, -R]:
+                    coeffs = np.array([0.5 * a_n, v_n, p_n - offset])
+                    coeffs[np.abs(coeffs) < 1e-12] = 0.0
+
+                    roots = np.roots(coeffs)
+                    for root in roots:
+                        if abs(root.imag) < 1e-6:
+                            t = root.real
+                            if t > 1e-5:
+                                # Verify the collision happens WITHIN the finite segment bounds
+                                P_hit = P0 + (V0 * t) + (0.5 * A * (t ** 2))
+                                projection = np.dot(P_hit - P1, u_hat)
+
+                                if 0 <= projection <= L:
+                                    valid_times.append((t, ('line', idx)))
+
+            # 2. Check Corner Circles (No distance filter!)
+            for idx, (cx, cy, cr) in enumerate(self.circles):
+                Pc = np.array([cx, cy])
+                dp = P0 - Pc
+                R_sum = R + cr
+
+                A_c = 0.25 * np.dot(A, A)
+                B_c = np.dot(A, V0)
+                C_c = np.dot(V0, V0) + np.dot(A, dp)
+                D_c = 2.0 * np.dot(dp, V0)
+                E_c = np.dot(dp, dp) - (R_sum ** 2)
+
+                coeffs = np.array([A_c, B_c, C_c, D_c, E_c])
+                coeffs[np.abs(coeffs) < 1e-12] = 0.0
+
+                roots = np.roots(coeffs)
+                for root in roots:
+                    if abs(root.imag) < 1e-6:
+                        t = root.real
+                        if t > 1e-5:
+                            valid_times.append((t, ('circle', idx)))
+
+            # 3. Queue the Earliest Event
+            if valid_times:
+                time_to_impact, target = min(valid_times, key=lambda x: x[0])
+                event_t = self.time + time_to_impact
+
+                event = Event(
+                    t=event_t,
+                    kind="CUSHION_COLLISION",
+                    i=i,
+                    j=target,
+                    version_i=self.ball_versions[i]
+                )
+                self.push_event(event)
+
+    def evaluate_cushion_collision(self, event):
+        """
+        Evaluates the resulting state of the balls after collision with a cushion.
+
+        Adapted from:
+        https://github.com/ekiefl/pooltool/blob/main/pooltool/physics/resolve/ball_cushion/stronge_compliant/model.py
+        :param event: Event
+        """
+        i = event.i
+        target_type, target_idx = event.j
+
+        P_ball = self.positions[i]
+        V_ball = self.velocities[i]
+        W_ball = self.angular[i]
+        R = self.radii[i]
+        m = self.cb_mass if i == 0 else self.ob_mass
+
+        # ==========================================
+        # 1. Determine the Collision Normal (n_hat)
+        # ==========================================
+
+        n_hat = np.empty((1,2), dtype=float)
+
+        if target_type == 'line':
+            P1 = np.array(self.line_segments[target_idx][0])
+            P2 = np.array(self.line_segments[target_idx][1])
+            D = P2 - P1
+            u_hat = D / np.linalg.norm(D)
+            n_hat = np.array([-u_hat[1], u_hat[0]])
+
+            # Ensure the normal points TOWARDS the ball center from the cushion
+            if np.dot(P_ball - P1, n_hat) < 0:
+                n_hat = -n_hat
+
+        elif target_type == 'circle':
+            Pc = np.array([self.circles[target_idx][0], self.circles[target_idx][1]])
+            dp = P_ball - Pc
+            n_hat = dp / np.linalg.norm(dp)
+
+        n_3d = np.array([n_hat[0], n_hat[1], 0.0])
+
+        # ==========================================
+        # 2. Calculate 3D Contact Surface Velocity
+        # ==========================================
+        # Convert ball velocity to 3D
+        v_3d = np.array([V_ball[0], V_ball[1], 0.0])
+
+        # Vector from ball center to contact point on the cushion
+        r_contact = -R * n_3d
+
+        # True velocity of the ball's surface at the point of impact
+        v_contact = v_3d + np.cross(W_ball, r_contact)
+
+        # ==========================================
+        # 3. Decompose into Normal and Tangent Vectors
+        # ==========================================
+        # Normal component
+        v_n_0 = np.dot(v_contact, n_3d)
+
+        # If moving away from the cushion (e.g., v_n_0 >= 0), it's a micro-collision ghost; ignore it.
+        if v_n_0 >= -1e-8:
+            return
+
+        # Tangential component vector
+        v_t_vec = v_contact - (v_n_0 * n_3d)
+        v_t_norm = np.linalg.norm(v_t_vec)
+
+        # Stronge's model strictly expects the tangential direction vector (t_3d) to be
+        # oriented such that the initial tangential velocity (v_t_0) is negative.
+        if v_t_norm > 1e-8:
+            t_3d = -v_t_vec / v_t_norm
+            v_t_0 = -v_t_norm
+        else:
+            t_3d = np.array([0.0, 0.0, 0.0])
+            v_t_0 = 0.0
+
+        # ==========================================
+        # 4. Apply Stronge's Compliant Impact Model
+        # ==========================================
+        eta_squared = (self.beta_t / self.beta_n) / (1.7 ** 2)
+
+        v_t_f, v_n_f = resolve_collinear_compliant_frictional_inelastic_collision(
+            v_t_0=v_t_0,
+            v_n_0=v_n_0,
+            m=m,
+            beta_t=self.beta_t,
+            beta_n=self.beta_n,
+            mu=self.mu_c,
+            e_n=self.e_c,
+            k_n=self.k_n,
+            eta_squared=eta_squared
+        )
+
+        # ==========================================
+        # 5. Apply the Velocity Deltas
+        # ==========================================
+        # Calculate the change in velocity according to the mass-matrix coefficients
+        Dv_n = (v_n_f - v_n_0) / self.beta_n
+        Dv_t = (v_t_f - v_t_0) / self.beta_t
+
+        # Update Linear Velocity (Extract x, y)
+        delta_v_linear = (Dv_n * n_3d) + (Dv_t * t_3d)
+        self.velocities[i] += delta_v_linear[:2]
+
+        # Update Angular Velocity (Transferring friction to spin)
+        # delta_w = I^-1 * (r x J) = (2.5 / R) * (-n_hat x Dv_t * t_hat)
+        delta_w = (2.5 / R) * np.cross(-n_3d, Dv_t * t_3d)
+        self.angular[i] += delta_w
+
+        # ==========================================
+        # 6. Update Engine State
+        # ==========================================
+        self.ball_states[i] = "SLIDING"
+        self.ball_versions[i] += 1
+
+        # Predict the new future for this ball
+        mask = np.zeros(1 + self.n_balls, dtype=bool)
+        mask[i] = True
+
+        self.predict_slide_roll_events(mask)
+        self.predict_ball_collision_events(mask)
+        self.predict_cushion_collision_events(mask)
+
+    def predict_pot_events(self, ball_mask: npt.NDArray[np.bool_]):
         return
 
     def advance_physics_state(self, dt):
@@ -461,14 +685,81 @@ class Simulation:
             decay = (5.0 * self.mu_sp * g * dt) / (2.0 * self.radii[self.in_play])
             self.angular[self.in_play, 2] = np.sign(w_z) * np.maximum(0.0, np.abs(w_z) - decay)
 
-    def event_loop(self):
-        while event := self.get_next_valid_event():
-            dt = event.t - self.time
+    def run(self, framerate: float = None, frame_callback=None, verbose: bool = False):
+        """
+        Processes the event queue until all active balls have come to a complete stop.
+        Call this directly after propelling the cue ball.
+        """
 
+        # picks up any balls just hit with propel_ball()
+        if not self.event_queue:
+            moving_mask = np.asarray(self.ball_states != "STOPPED", dtype=bool)
+            if np.any(moving_mask):
+                self.predict_slide_roll_events(moving_mask)
+                self.predict_ball_collision_events(moving_mask)
+                self.predict_cushion_collision_events(moving_mask) # Uncomment when ready
+                # self.predict_pot_events(moving_mask)               # Uncomment when ready
+
+        if framerate and frame_callback:
+            frame_dt = 1.0 / framerate
+            next_frame_time = self.time + frame_dt
+            frame_callback(self)  # Record the initial starting state
+        else:
+            next_frame_time = float('inf')
+            frame_dt = 0
+
+        # Main Event Loop
+        while True:
+            # Pop the next valid event
+            event = self.get_next_valid_event()
+
+            if event is None:
+                if verbose:
+                    print(f"\n[{self.time:.4f}] Simulation at rest. Queue empty.")
+                break  # The queue is empty - simulation is at rest.
+
+            while next_frame_time < event.t:
+                dt = next_frame_time - self.time
+                self.advance_physics_state(dt)
+                self.time = next_frame_time
+                frame_callback(self)
+                next_frame_time += frame_dt
+
+            # Advance the global clock and physical state to the exact moment of the event
+            dt = event.t - self.time
             if dt > 0:
                 self.advance_physics_state(dt)
-                self.time = event.t  # Update the master simulation clock
+                self.time = event.t
 
+            pre_state, pre_v = None, None
+            pre_states, pre_v_i, pre_v_j = None, None, None
+            i, j = None, None
+
+            if verbose:
+                print(f"[{self.time:.4f}] EVENT: {event.kind}")
+                if event.j is None:
+                    i = event.i
+                    print(f"  Ball {i} @ Pos: [{self.positions[i, 0]:.4f}, {self.positions[i, 1]:.4f}]")
+                    pre_state = self.ball_states[i]
+                    pre_v = self.velocities[i].copy()
+                elif isinstance(event.j, int):
+                    # Ball-to-Ball collision
+                    i, j = event.i, event.j
+                    print(f"  Ball {i} @ Pos: [{self.positions[i, 0]:.4f}, {self.positions[i, 1]:.4f}]")
+                    print(f"  Ball {j} @ Pos: [{self.positions[j, 0]:.4f}, {self.positions[j, 1]:.4f}]")
+                    pre_states = (self.ball_states[i], self.ball_states[j])
+                    pre_v_i, pre_v_j = self.velocities[i].copy(), self.velocities[j].copy()
+                elif isinstance(event.j, tuple):
+                    # Ball-to-Cushion collision
+                    i = event.i
+                    target_type, target_idx = event.j
+                    print(f"  Ball {i} @ Pos: [{self.positions[i, 0]:.4f}, {self.positions[i, 1]:.4f}]")
+                    print(f"  Target: {target_type.upper()} {target_idx}")
+                    pre_state = self.ball_states[i]
+                    pre_v = self.velocities[i].copy()
+
+
+            # resolve the event
             match event.kind:
                 case "SLIDE_ROLL":
                     self.evaluate_slide_roll(event)
@@ -477,7 +768,7 @@ class Simulation:
                 case "BALL_COLLISION":
                     self.evaluate_ball_collision(event)
                 case "CUSHION_COLLISION":
-                    # self.evaluate_cushion_collision(event)
+                    self.evaluate_cushion_collision(event)
                     pass
                 case "POT":
                     # self.evaluate_pot(event)
@@ -485,3 +776,25 @@ class Simulation:
                 case _:
                     raise ValueError(f"Unknown event kind: {event.kind}")
 
+            if verbose:
+                if event.j is None or isinstance(event.j, tuple):
+                    # Single ball state changed (Slide/Roll/Stop or Cushion Bounce)
+                    print(f"    -> State: {pre_state} to {self.ball_states[i]}")
+                    print(f"    -> Vel:   [{pre_v[0]:.4f}, {pre_v[1]:.4f}] to [{self.velocities[i, 0]:.4f},"
+                          f" {self.velocities[i, 1]:.4f}]")
+                elif isinstance(event.j, int):
+                    # Two balls state changed
+                    print(f"    -> Ball {i} State: {pre_states[0]} to {self.ball_states[i]}")
+                    print(f"    -> Ball {j} State: {pre_states[1]} to {self.ball_states[j]}")
+                    print(f"    -> Ball {i} Vel:   [{pre_v_i[0]:.4f}, {pre_v_i[1]:.4f}] to "
+                          f"[{self.velocities[i, 0]:.4f}, {self.velocities[i, 1]:.4f}]")
+                    print(f"    -> Ball {j} Vel:   [{pre_v_j[0]:.4f}, {pre_v_j[1]:.4f}] to "
+                          f"[{self.velocities[j, 0]:.4f}, {self.velocities[j, 1]:.4f}]")
+                print("-" * 50)
+
+            if framerate and frame_callback:
+                frame_callback(self)
+
+            if np.all(self.ball_states[self.in_play] == "STOPPED"):
+                self.event_queue.clear()
+                break
