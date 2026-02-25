@@ -57,21 +57,27 @@ def main():
 
 
 def headless_test():
-    sim = Simulation(n_balls=1, dt_max=FRAME_TIME)
+    sim = Simulation(n_balls=2, dt_max=FRAME_TIME)
     sim.reset(
         positions=np.array([
             [-1, -1],
             [0, 0],
+            [0, 0.4]
         ]),
-        colours=np.array([3, 0]),
-        in_play=np.array([False, True])
+        colours=np.array([3, 0, 0]),
+        in_play=np.array([False, True, True])
     )
-    sim.velocities[1] = np.array([
-        [1, 1],
-    ])
-    sim.angular[1] = np.array([[130, -60, 0]])
-    print(sim.predict_slide_roll_events())
 
+    sim.propel_ball(np.array([False, True, True]),
+                    np.array([[0.4, 0.2],
+                              [0.3, -0.5]]),
+
+                    np.array([[0, 0, 0],
+                              [0, 0, 0]]))
+
+    sim.predict_slide_roll_events(np.array([False, True, True]))
+    for event in sim.event_queue:
+        print(event)
 
 
 if __name__ == "__main__":
