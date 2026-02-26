@@ -1,19 +1,20 @@
 import numpy as np
 import numpy.typing as npt
 from pool_simulation.constants import *
-from event import Event
-from stronge_compliant import resolve_collinear_compliant_frictional_inelastic_collision
+from .event import Event
+from .stronge_compliant import resolve_collinear_compliant_frictional_inelastic_collision
 import heapq
+import time
 
 
 class Simulation:
-    def __init__(self, n_balls=15,
+    def __init__(self, n_obj_balls=15,
                  cb_radius=CUE_BALL_RADIUS, cb_mass=CUE_BALL_MASS,
                  ob_radius=OBJECT_BALL_RADIUS, ob_mass=OBJECT_BALL_MASS,
                  mu_s=MU_S, mu_r=MU_R, mu_sp = MU_SP, mu_b = MU_B, e_c = E_C,
                  mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T):
 
-        self.n_balls = n_balls
+        self.n_obj_balls = n_obj_balls
         self.table_width = TABLE_WIDTH
         self.table_height = TABLE_HEIGHT
         self.cb_mass = cb_mass
@@ -34,32 +35,87 @@ class Simulation:
 
         # Table Geometry
         self.line_segments = [
-            ((-0.9144, -0.4572), (-0.9144, 0.4572)),
-            ((-0.9144, 0.4572), (0.9144, 0.4572)),
-            ((0.9144, 0.4572), (0.9144, -0.4572)),
-            ((0.9144, -0.4572), (-0.9144, -0.4572))
+            ((0.1346, 0.4572), (0.8147, 0.4572)),
+            ((0.868785228149406, 0.474264), (0.924562160209359, 0.5162)),
+            ((0.0499787766576, 0.5162122073954), (0.078405956002, 0.4826978086535)),
+            ((0.1346, -0.4572), (0.8147, -0.4572)),
+            ((0.868785228149406, -0.474264), (0.924562160209359, -0.5162)),
+            ((0.0499787766576, -0.5162122073954), (0.078405956002, -0.4826978086535)),
+            ((-0.1346, 0.4572), (-0.8147, 0.4572)),
+            ((-0.868785228149406, 0.474264), (-0.924562160209359, 0.5162)),
+            ((-0.0499787766576, 0.5162122073954), (-0.078405956002, 0.4826978086535)),
+            ((-0.1346, -0.4572), (-0.8147, -0.4572)),
+            ((-0.868785228149406, -0.474264), (-0.924562160209359, -0.5162)),
+            ((-0.0499787766576, -0.5162122073954), (-0.078405956002, -0.4826978086535)),
+            ((0.9144, -0.3575), (0.9144, 0.3575)),
+            ((0.932464, 0.41158522815), (0.9744, 0.467362160211)),
+            ((0.932464, -0.41158522815), (0.9744, -0.467362160211)),
+            ((-0.9144, -0.3575), (-0.9144, 0.3575)),
+            ((-0.932464, 0.41158522815), (-0.9744, 0.467362160211)),
+            ((-0.932464, -0.41158522815), (-0.9744, -0.467362160211))
         ]
-        self.circles = []
+
+        self.circles = [
+            (1.0044, 0.3575, 0.09), (1.0044, -0.3575, 0.09),
+            (-1.0044, 0.3575, 0.09), (-1.0044, -0.3575, 0.09),
+            (0.8147, 0.5472, 0.09), (0.1346, 0.5322, 0.075),
+            (0.8147, -0.5472, 0.09), (0.1346, -0.5322, 0.075),
+            (-0.8147, 0.5472, 0.09), (-0.1346, 0.5322, 0.075),
+            (-0.8147, -0.5472, 0.09), (-0.1346, -0.5322, 0.075)
+        ]
+
+        self.pockets = [
+            (-CORNER_POCKET_X, CORNER_POCKET_Y, POCKET_RADIUS),  # Top Left
+            (0.0, MIDDLE_POCKET_Y, POCKET_RADIUS),  # Top Middle
+            (CORNER_POCKET_X, CORNER_POCKET_Y, POCKET_RADIUS),  # Top Right
+            (-CORNER_POCKET_X, -CORNER_POCKET_Y, POCKET_RADIUS),  # Bottom Left
+            (0.0, -MIDDLE_POCKET_Y, POCKET_RADIUS),  # Bottom Middle
+            (CORNER_POCKET_X, -CORNER_POCKET_Y, POCKET_RADIUS)  # Bottom Right
+        ]
 
         # State arrays
-        self.positions = np.zeros((1 + n_balls, 2), dtype=np.float64)
-        self.velocities = np.zeros((1 + n_balls, 2), dtype=np.float64)
-        self.sliding_velocities = np.zeros((1 + n_balls, 2), dtype=np.float64)
-        self.angular = np.zeros((1 + n_balls, 3), dtype=np.float64)
-        self.radii = np.array([cb_radius] + [ob_radius] * n_balls, dtype=np.float64)
-        self.in_play = np.ones(1 + n_balls, dtype=bool)
-        self.colours = np.zeros(1 + n_balls, dtype=np.int8)
-        self.ball_states = np.empty(1 + n_balls, dtype="<U10")  # SLIDING | ROLLING | STOPPED | POCKETED
+        self.positions = np.zeros((1 + n_obj_balls, 2), dtype=np.float64)
+        self.velocities = np.zeros((1 + n_obj_balls, 2), dtype=np.float64)
+        self.sliding_velocities = np.zeros((1 + n_obj_balls, 2), dtype=np.float64)
+        self.angular = np.zeros((1 + n_obj_balls, 3), dtype=np.float64)
+        self.radii = np.array([cb_radius] + [ob_radius] * n_obj_balls, dtype=np.float64)
+        self.in_play = np.ones(1 + n_obj_balls, dtype=bool)
+        self.colours = np.zeros(1 + n_obj_balls, dtype=np.int8)
+        self.ball_states = np.empty(1 + n_obj_balls, dtype="<U10")  # SLIDING | ROLLING | STOPPED | POCKETED
         self.ball_states[:] = "STOPPED"
-        self.ball_versions = np.zeros(1 + n_balls, dtype=np.int32)
+        self.ball_versions = np.zeros(1 + n_obj_balls, dtype=np.int32)
 
         self.time = 0.0
         self.event_queue = []
 
+        # Numba takes ~0.6s to compile the Stronge model on the first call.
+        # We call it here with dummy physics values so the first real shot is instant.
+        try:
+            from pool_simulation.physics.stronge_compliant import \
+                resolve_collinear_compliant_frictional_inelastic_collision
+
+            dummy_beta_t = 3.5
+            dummy_beta_n = 1.0
+            dummy_eta_sq = (dummy_beta_t / dummy_beta_n) / (1.7 ** 2)
+
+            _ = resolve_collinear_compliant_frictional_inelastic_collision(
+                v_t_0=-1.0,  # Must be <= 0
+                v_n_0=-1.0,  # Must be < 0
+                m=0.17,  # Standard ball mass
+                beta_t=dummy_beta_t,
+                beta_n=dummy_beta_n,
+                mu=0.2,
+                e_n=0.85,
+                k_n=1e3,
+                eta_squared=dummy_eta_sq
+            )
+        except Exception as e:
+            print(f"Warning: Numba warm-up failed. First collision will be slow. ({e})")
+
     def reset(self, positions=None, colours=None, in_play=None):
-        """Reset to given positions/velocities, or random if None."""
+        """Reset to given positions, or random if None."""
         if positions is None:
-            self.positions[:] = np.random.rand(self.n_balls, 2) * [
+            self.positions[:] = np.random.rand(self.n_obj_balls, 2) * [
                 self.table_width, self.table_height
             ]
         else:
@@ -67,8 +123,8 @@ class Simulation:
 
         if colours is None:
             self.colours[:] = 0
-            cutoff = np.random.randint(0, self.n_balls + 1)
-            self.colours[cutoff:self.n_balls] = 1
+            cutoff = np.random.randint(0, self.n_obj_balls + 1)
+            self.colours[cutoff:self.n_obj_balls] = 1
             self.colours[-1] = 2
         else:
             self.colours[:] = colours
@@ -87,9 +143,57 @@ class Simulation:
     def reset_to_break(self):
         """Resets the table to break position with micro-gaps for physics stability."""
         try:
-            assert self.n_balls == 15
+            assert self.n_obj_balls == 15
         except AssertionError:
             raise AttributeError("Number of balls must be 15 to reset to break.")
+
+        R = self.radii[1] + 1e-5
+        R_SQRT3 = np.sqrt(3) * R
+
+        base_positions = np.array([
+            [-0.547, 0.0],  # Cue ball
+            [BLACK_SPOT_X - 2 * R_SQRT3, 0.0],
+            [BLACK_SPOT_X - R_SQRT3, R],
+            [BLACK_SPOT_X, -2 * R],
+            [BLACK_SPOT_X + R_SQRT3, 3 * R],
+            [BLACK_SPOT_X + R_SQRT3, -1 * R],
+            [BLACK_SPOT_X + 2 * R_SQRT3, 2 * R],
+            [BLACK_SPOT_X + 2 * R_SQRT3, -4 * R],
+            [BLACK_SPOT_X - R_SQRT3, -1 * R],
+            [BLACK_SPOT_X, 2 * R],
+            [BLACK_SPOT_X + R_SQRT3, R],
+            [BLACK_SPOT_X + R_SQRT3, -3 * R],
+            [BLACK_SPOT_X + 2 * R_SQRT3, 4 * R],
+            [BLACK_SPOT_X + 2 * R_SQRT3, 0.0],
+            [BLACK_SPOT_X + 2 * R_SQRT3, -2 * R],
+            [BLACK_SPOT_X, 0.0],
+        ])
+
+        # 3. Generate a microscopic random jitter
+        jitter = np.zeros_like(base_positions)
+        jitter_magnitude = 5e-5
+        jitter[1:] = (np.random.rand(15, 2) - 0.5) * jitter_magnitude
+
+        # 4. Add a tiny bias pushing them slightly away from the apex
+        for i in range(1, 16):
+            direction_from_apex = base_positions[i] - base_positions[1]
+            dist = np.linalg.norm(direction_from_apex)
+            if dist > 0:
+                jitter[i] += (direction_from_apex / dist) * 1e-5
+
+        final_positions = base_positions + jitter
+
+        # 5. Reset the engine with the matched WEPF color array
+        self.reset(
+            final_positions,
+            np.array([0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3])
+        )
+
+    def reset_to_six_red(self):
+        try:
+            assert self.n_obj_balls == 6
+        except AssertionError:
+            raise AttributeError("Number of balls must be 6 to reset to six-red break.")
 
         # Define the perfect mathematical rack
         base_positions = np.array([
@@ -97,28 +201,19 @@ class Simulation:
             [BLACK_SPOT_X - 2 * SQRT_3_INCHES, 0],
             [BLACK_SPOT_X - SQRT_3_INCHES, INCHES_TO_M],
             [BLACK_SPOT_X, -2 * INCHES_TO_M],
-            [BLACK_SPOT_X + SQRT_3_INCHES, 3 * INCHES_TO_M],
-            [BLACK_SPOT_X + SQRT_3_INCHES, -1 * INCHES_TO_M],
-            [BLACK_SPOT_X + 2 * SQRT_3_INCHES, 2 * INCHES_TO_M],
-            [BLACK_SPOT_X + 2 * SQRT_3_INCHES, -4 * INCHES_TO_M],
             [BLACK_SPOT_X - SQRT_3_INCHES, -1 * INCHES_TO_M],
             [BLACK_SPOT_X, 2 * INCHES_TO_M],
-            [BLACK_SPOT_X + SQRT_3_INCHES, INCHES_TO_M],
-            [BLACK_SPOT_X + SQRT_3_INCHES, -3 * INCHES_TO_M],
-            [BLACK_SPOT_X + 2 * SQRT_3_INCHES, 4 * INCHES_TO_M],
-            [BLACK_SPOT_X + 2 * SQRT_3_INCHES, 0],
-            [BLACK_SPOT_X + 2 * SQRT_3_INCHES, -2 * INCHES_TO_M],
             [BLACK_SPOT_X, 0],
         ])
 
         # Generate a microscopic random jitter
         jitter = np.zeros_like(base_positions)
-        jitter_magnitude = 5e-5
-        jitter[1:] = (np.random.rand(15, 2) - 0.5) * jitter_magnitude
+        jitter_magnitude = 5e-6
+        jitter[1:] = (np.random.rand(6, 2) - 0.5) * jitter_magnitude
 
         # Add a tiny bias pushing them slightly away from the apex
         # to guarantee they aren't overlapping
-        for i in range(1, 16):
+        for i in range(1, 7):
             direction_from_apex = base_positions[i] - base_positions[1]
             if np.linalg.norm(direction_from_apex) > 0:
                 jitter[i] += (direction_from_apex / np.linalg.norm(direction_from_apex)) * 1e-5
@@ -127,7 +222,8 @@ class Simulation:
 
         self.reset(
             final_positions,
-            np.array([3, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2])
+            # np.array([0, 1, 1, 1, 1, 1, 1])
+            np.array([0, -1, -2, -3, -4, -5, -6])
         )
 
     def push_event(self, event):
@@ -155,11 +251,81 @@ class Simulation:
 
         return None
 
+    def move_cue_ball(self, p: npt.NDArray[np.float64]):
+        other_balls_mask = self.in_play.copy()
+        other_balls_mask[0] = False
+
+        if np.any(other_balls_mask):
+            other_positions = self.positions[other_balls_mask]
+            other_radii = self.radii[other_balls_mask]
+
+            dp = other_positions - p
+            distances = np.linalg.norm(dp, axis=1)
+            safe_distances = self.radii[0] + other_radii + 1e-5
+
+            if np.any(distances < safe_distances):
+                raise ValueError("Invalid Placement: Cue ball overlaps with another ball.")
+
+        self.positions[0] = p
+        self.ball_versions[0] += 1
+
+        mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
+        mask[0] = True
+        self.predict_ball_collision_events(mask)
+        self.predict_cushion_collision_events(mask)
+        self.predict_pot_events(mask)
+
     def propel_ball(self, ball_mask: npt.NDArray[np.bool_], velocities, angulars):
         self.velocities[ball_mask] = velocities
         self.angular[ball_mask] = angulars
         self.ball_states[ball_mask] = "SLIDING"
         self.ball_versions[ball_mask] += 1
+
+    def strike_cue_ball(self, velocity_x: float, velocity_y: float, topspin: float = 0.0, sidespin: float = 0.0,
+                        elevation_deg: float = 0.0):
+        """
+        topspin: Positive for forward, Negative for backspin (screw/draw).
+        sidespin: Positive for right spin (spins CCW), Negative for left english.
+        elevation_deg: Cue elevation angle. > 0 tilts the sidespin axis to create swerve.
+        """
+        v = np.array([velocity_x, velocity_y])
+        v_norm = np.linalg.norm(v)
+
+        if v_norm < 1e-8:
+            return
+
+        # 1. Base travel vectors
+        v_dir = v / v_norm
+        v_perp = np.array([-v_dir[1], v_dir[0]])  # Perpendicular points "Left" of the shot line
+
+        # 2. Local Spin Components
+        elevation_rad = np.radians(elevation_deg)
+
+        # Spin along the perpendicular axis (Standard Topspin/Draw)
+        w_perp = topspin
+
+        # Spin along the vertical Z-axis (Standard Sidespin)
+        w_z = sidespin * np.cos(elevation_rad)
+
+        # Spin along the direction of travel (The Massé / Swerve factor!)
+        # Elevating the cue tilts the sidespin axis forward into the cloth.
+        w_dir = sidespin * np.sin(elevation_rad)
+
+        # 3. Convert local spin to global world coordinates
+        w_world_x = (w_dir * v_dir[0]) + (w_perp * v_perp[0])
+        w_world_y = (w_dir * v_dir[1]) + (w_perp * v_perp[1])
+
+        angular_velocity = np.array([w_world_x, w_world_y, w_z])
+
+        # 4. Fire the shot!
+        active_mask = np.zeros(self.n_obj_balls + 1, dtype=bool)
+        active_mask[0] = True
+
+        self.propel_ball(
+            ball_mask=active_mask,
+            velocities=np.array([v]),
+            angulars=np.array([angular_velocity])
+        )
 
     def predict_slide_roll_events(self, ball_mask: npt.NDArray[np.bool_]):
         sliding_mask = self.ball_states == "SLIDING"  # Sliding mask should eliminate any stopped balls
@@ -183,12 +349,12 @@ class Simulation:
         i = event.i
         self.ball_states[i] = "ROLLING"
         self.ball_versions[i] += 1
-        mask = np.zeros(1 + self.n_balls, dtype=bool)
+        mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
         self.predict_roll_stop_events(mask)
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
-        # self.predict_pot_events(mask)
+        self.predict_pot_events(mask)
 
     def predict_roll_stop_events(self, ball_mask: npt.NDArray[np.bool_]):
 
@@ -212,11 +378,11 @@ class Simulation:
         i = event.i
         self.ball_states[i] = "STOPPED"
         self.ball_versions[i] += 1
-        mask = np.zeros(1 + self.n_balls, dtype=bool)
+        mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
-        # self.predict_pot_events(mask)
+        self.predict_pot_events(mask)
 
     def _get_acceleration(self, i):
         state = self.ball_states[i]
@@ -256,19 +422,27 @@ class Simulation:
         D = 2.0 * np.dot(dx, dv)
         E = np.dot(dx, dx) - (R_sum ** 2)
 
-        coeffs = np.array([A, B, C, D, E])
-        coeffs[np.abs(coeffs) < 1e-12] = 0.0
-
-        roots = np.roots(coeffs)
-
         valid_times = []
-        for root in roots:
-            if abs(root.imag) < 1e-6:
-                t = root.real
-                # Time must be strictly positive.
-                # We use > 1e-6 to prevent immediate re-collisions caused by floating point drift
-                if t > 1e-6:
-                    valid_times.append(t)
+
+        # If E is negative, the distance between centers is less than R_sum (they are overlapping).
+        # If dot(dx, dv) < 0, they are moving towards each other.
+        if E < -1e-5 and np.dot(dx, dv) < 0:
+            # Force an immediate collision at t=0.0.
+            # This prevents the solver from scheduling the collision for the exit time
+            valid_times.append(0.0)
+        else:
+            # Standard quartic evaluation for future collisions
+            coeffs = np.array([A, B, C, D, E])
+            coeffs[np.abs(coeffs) < 1e-12] = 0.0
+
+            roots = np.roots(coeffs)
+
+            for root in roots:
+                if abs(root.imag) < 1e-6:
+                    t = root.real
+                    # Accept immediate/touching collisions, broadening tolerance slightly
+                    if t > -1e-4:
+                        valid_times.append(max(0.0, t))
 
         # Queue the event if a collision happens in the future
         if valid_times:
@@ -288,14 +462,11 @@ class Simulation:
 
     def predict_ball_collision_events(self, ball_mask: npt.NDArray[np.bool_]):
 
-        next_event_time = self.event_queue[0].t if self.event_queue else self.time + 5.0
-        max_dt = next_event_time - self.time
-
         pairs_to_check = []
-        for i in range(self.n_balls + 1):
+        for i in range(self.n_obj_balls + 1):
             if not self.in_play[i]: continue
 
-            for j in range(i + 1, self.n_balls + 1):
+            for j in range(i + 1, self.n_obj_balls + 1):
                 if not self.in_play[j]: continue
 
                 # If neither ball was just updated, their collision is already predicted
@@ -308,19 +479,7 @@ class Simulation:
 
                 pairs_to_check.append((i, j))
 
-        v_norms = np.linalg.norm(self.velocities, axis=1)
-
         for i, j in pairs_to_check:
-            dist = np.linalg.norm(self.positions[i] - self.positions[j])
-
-            # The absolute maximum distance these two balls could close in the time window
-            max_closing_dist = (v_norms[i] + v_norms[j]) * max_dt
-
-            # If they are too far apart to touch, skip
-            if dist > (self.radii[i] + self.radii[j] + max_closing_dist):
-                continue
-
-
             self._solve_collision_quartic(i, j)
 
     def evaluate_ball_collision(self, event):
@@ -369,7 +528,7 @@ class Simulation:
 
         # 4. Normal Impulse (Crown assumes perfectly elastic, restitution e = 1)
         # j_n = -(1 + e) * v_rel_n / (1/m1 + 1/m2)
-        restitution = 1.0
+        restitution = RESTITUTION
         j_n = -(1.0 + restitution) * v_rel_n / ((1.0 / m1) + (1.0 / m2))
 
         # 5. Tangential Impulse (Friction & Spin transfer)
@@ -413,18 +572,36 @@ class Simulation:
         self.ball_states[i] = "SLIDING"
         self.ball_states[j] = "SLIDING"
 
+        # ==========================================
+        # POSITIONAL CORRECTION
+        # ==========================================
+        # Push the balls apart so they are no longer touching.
+        # This prevents the solver from getting stuck in an infinite 0.0s collision loop.
+        dp = self.positions[i] - self.positions[j]
+        dist = np.linalg.norm(dp)
+        R_sum = self.radii[i] + self.radii[j]
+
+        overlap = R_sum - dist
+        if overlap > -1e-5:  # If they are overlapping or perfectly touching
+            n_hat = dp / dist
+            # Push them apart by the overlap amount + a microscopic 0.01mm gap
+            correction = (overlap + 1e-5) / 2.0
+            self.positions[i] += n_hat * correction
+            self.positions[j] -= n_hat * correction
+
         # Invalidate old future events
         self.ball_versions[i] += 1
         self.ball_versions[j] += 1
 
         # 9. Predict the new future for these two balls
-        mask = np.zeros(1 + self.n_balls, dtype=bool)
+        mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
         mask[j] = True
 
         self.predict_slide_roll_events(mask)
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
+        self.predict_pot_events(mask)
 
     def predict_cushion_collision_events(self, ball_mask):
         active_mask = np.asarray(self.in_play & (self.ball_states != "STOPPED") & ball_mask, dtype=bool)
@@ -621,15 +798,116 @@ class Simulation:
         self.ball_versions[i] += 1
 
         # Predict the new future for this ball
-        mask = np.zeros(1 + self.n_balls, dtype=bool)
+        mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
 
         self.predict_slide_roll_events(mask)
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
+        self.predict_pot_events(mask)
 
-    def predict_pot_events(self, ball_mask: npt.NDArray[np.bool_]):
-        return
+    def predict_pot_events(self, ball_mask):
+        active_mask = np.asarray(self.in_play & (self.ball_states != "STOPPED") & ball_mask, dtype=bool)
+        valid_indices = np.where(active_mask)[0]
+
+        for i in valid_indices:
+            P0 = self.positions[i]
+            V0 = self.velocities[i]
+            A = self._get_acceleration(i)
+            R = self.radii[i]
+
+            # Time required for gravity to pull the ball down below the pocket lip
+            t_drop = np.sqrt((2.0 * R) / g)
+
+            valid_times = []
+
+            for idx, (cx, cy, pr) in enumerate(self.pockets):
+                Pc = np.array([cx, cy])
+                dp = P0 - Pc
+
+                if np.dot(dp, dp) < (pr ** 2):
+                    valid_times.append((0.0, idx))
+                    continue  # Skip the complex chord math for this pocket
+
+                A_c = 0.25 * np.dot(A, A)
+                B_c = np.dot(A, V0)
+                C_c = np.dot(V0, V0) + np.dot(A, dp)
+                D_c = 2.0 * np.dot(dp, V0)
+                E_c = np.dot(dp, dp) - (pr ** 2)
+
+                coeffs = np.array([A_c, B_c, C_c, D_c, E_c])
+                coeffs[np.abs(coeffs) < 1e-12] = 0.0
+
+                roots = np.roots(coeffs)
+                pocket_roots = []
+
+                for root in roots:
+                    if abs(root.imag) < 1e-6:
+                        t = root.real
+                        if t > 1e-5:
+                            pocket_roots.append(t)
+
+                # We need both an entry and exit time to evaluate the chord
+                if len(pocket_roots) >= 2:
+                    pocket_roots.sort()
+                    t_entry = pocket_roots[0]
+                    t_exit = pocket_roots[1]
+                    delta_t = t_exit - t_entry
+
+                    # Find the closest point the ball gets to the center of the pocket
+                    t_closest = (t_entry + t_exit) / 2.0
+                    P_closest = P0 + (V0 * t_closest) + (0.5 * A * (t_closest ** 2))
+
+                    # Impact Parameter: Distance from pocket center to the trajectory line
+                    b_dist = np.linalg.norm(P_closest - Pc)
+                    hit_fraction = float(b_dist) / pr
+
+                    # ==========================================
+                    # THE CHORD / RATTLE HEURISTIC
+                    # ==========================================
+                    if hit_fraction < 0.7:
+                        # Solid Hit (Center cut or slightly off-center)
+                        # The ball hits the back liner of the pocket. It drops regardless of speed.
+                        valid_times.append((t_entry, idx))
+                    elif delta_t > t_drop:
+                        # Grazing Hit (Small chord length) BUT moving slow enough to fall
+                        valid_times.append((t_entry, idx))
+
+                    # IF Grazing Hit AND too fast:
+                    # We do nothing! The event is ignored, and the cushion predictor
+                    # will naturally crash the ball into the far circular jaw instead!
+
+            if valid_times:
+                time_to_drop, pocket_idx = min(valid_times, key=lambda x: x[0])
+                event_t = self.time + time_to_drop
+
+                event = Event(
+                    t=event_t,
+                    kind="POT",
+                    i=i,
+                    j=('pocket', pocket_idx),
+                    version_i=self.ball_versions[i]
+                )
+                self.push_event(event)
+
+    def evaluate_pot(self, event):
+        i = event.i
+
+        # Remove from play
+        self.in_play[i] = False
+        self.ball_states[i] = "STOPPED"
+
+        # Kill all momentum
+        self.velocities[i] = np.array([0.0, 0.0])
+        self.angular[i] = np.array([0.0, 0.0, 0.0])
+
+        self.positions[i] = np.array([999.0, 999.0])
+
+        self.ball_versions[i] += 1
+
+        # If the cue ball (0) is potted
+        if i == 0:
+            print("SCRATCH! Cue ball potted.")
 
     def advance_physics_state(self, dt):
         if dt <= 0.0:
@@ -676,8 +954,8 @@ class Simulation:
 
             # Angular velocity: omega = 1/R z-hat x v
             new_v = self.velocities[roll_mask]
-            self.angular[roll_mask, 0] = new_v[:, 1] / self.radii[roll_mask]
-            self.angular[roll_mask, 1] = -new_v[:, 0] / self.radii[roll_mask]
+            self.angular[roll_mask, 0] = -new_v[:, 1] / self.radii[roll_mask]
+            self.angular[roll_mask, 1] = new_v[:, 0] / self.radii[roll_mask]
 
         # z-axis spin
         if np.any(self.in_play):
@@ -690,15 +968,15 @@ class Simulation:
         Processes the event queue until all active balls have come to a complete stop.
         Call this directly after propelling the cue ball.
         """
-
+        start_time = time.perf_counter()
         # picks up any balls just hit with propel_ball()
         if not self.event_queue:
             moving_mask = np.asarray(self.ball_states != "STOPPED", dtype=bool)
             if np.any(moving_mask):
                 self.predict_slide_roll_events(moving_mask)
                 self.predict_ball_collision_events(moving_mask)
-                self.predict_cushion_collision_events(moving_mask) # Uncomment when ready
-                # self.predict_pot_events(moving_mask)               # Uncomment when ready
+                self.predict_cushion_collision_events(moving_mask)
+                self.predict_pot_events(moving_mask)
 
         if framerate and frame_callback:
             frame_dt = 1.0 / framerate
@@ -731,9 +1009,10 @@ class Simulation:
                 self.advance_physics_state(dt)
                 self.time = event.t
 
-            pre_state, pre_v = None, None
+            pre_state, pre_v, pre_w = None, None, None
             pre_states, pre_v_i, pre_v_j = None, None, None
             i, j = None, None
+            pre_w_i, pre_w_j = None, None
 
             if verbose:
                 print(f"[{self.time:.4f}] EVENT: {event.kind}")
@@ -742,6 +1021,7 @@ class Simulation:
                     print(f"  Ball {i} @ Pos: [{self.positions[i, 0]:.4f}, {self.positions[i, 1]:.4f}]")
                     pre_state = self.ball_states[i]
                     pre_v = self.velocities[i].copy()
+                    pre_w = self.angular[i].copy()
                 elif isinstance(event.j, int):
                     # Ball-to-Ball collision
                     i, j = event.i, event.j
@@ -749,6 +1029,7 @@ class Simulation:
                     print(f"  Ball {j} @ Pos: [{self.positions[j, 0]:.4f}, {self.positions[j, 1]:.4f}]")
                     pre_states = (self.ball_states[i], self.ball_states[j])
                     pre_v_i, pre_v_j = self.velocities[i].copy(), self.velocities[j].copy()
+                    pre_w_i, pre_w_j = self.angular[i].copy(), self.angular[j].copy()
                 elif isinstance(event.j, tuple):
                     # Ball-to-Cushion collision
                     i = event.i
@@ -757,8 +1038,9 @@ class Simulation:
                     print(f"  Target: {target_type.upper()} {target_idx}")
                     pre_state = self.ball_states[i]
                     pre_v = self.velocities[i].copy()
+                    pre_w = self.angular[i].copy()
 
-
+            start = time.time()
             # resolve the event
             match event.kind:
                 case "SLIDE_ROLL":
@@ -771,7 +1053,7 @@ class Simulation:
                     self.evaluate_cushion_collision(event)
                     pass
                 case "POT":
-                    # self.evaluate_pot(event)
+                    self.evaluate_pot(event)
                     pass
                 case _:
                     raise ValueError(f"Unknown event kind: {event.kind}")
@@ -782,6 +1064,8 @@ class Simulation:
                     print(f"    -> State: {pre_state} to {self.ball_states[i]}")
                     print(f"    -> Vel:   [{pre_v[0]:.4f}, {pre_v[1]:.4f}] to [{self.velocities[i, 0]:.4f},"
                           f" {self.velocities[i, 1]:.4f}]")
+                    print(f"    -> Spin:  [{pre_w[0]:.2f}, {pre_w[1]:.2f}, {pre_w[2]:.2f}] to "
+                          f"[{self.angular[i, 0]:.2f}, {self.angular[i, 1]:.2f}, {self.angular[i, 2]:.2f}]")
                 elif isinstance(event.j, int):
                     # Two balls state changed
                     print(f"    -> Ball {i} State: {pre_states[0]} to {self.ball_states[i]}")
@@ -790,6 +1074,11 @@ class Simulation:
                           f"[{self.velocities[i, 0]:.4f}, {self.velocities[i, 1]:.4f}]")
                     print(f"    -> Ball {j} Vel:   [{pre_v_j[0]:.4f}, {pre_v_j[1]:.4f}] to "
                           f"[{self.velocities[j, 0]:.4f}, {self.velocities[j, 1]:.4f}]")
+                    print(f"    -> Ball {i} Spin:  [{pre_w_i[0]:.2f}, {pre_w_i[1]:.2f}, {pre_w_i[2]:.2f}] "
+                          f"to [{self.angular[i, 0]:.2f}, {self.angular[i, 1]:.2f}, {self.angular[i, 2]:.2f}]")
+                    print(f"    -> Ball {j} Spin:  [{pre_w_j[0]:.2f}, {pre_w_j[1]:.2f}, {pre_w_j[2]:.2f}] "
+                          f"to [{self.angular[j, 0]:.2f}, {self.angular[j, 1]:.2f}, {self.angular[j, 2]:.2f}]")
+                print(f"Evaluated in {time.time()-start}")
                 print("-" * 50)
 
             if framerate and frame_callback:
@@ -798,3 +1087,5 @@ class Simulation:
             if np.all(self.ball_states[self.in_play] == "STOPPED"):
                 self.event_queue.clear()
                 break
+
+        return time.perf_counter() - start_time

@@ -2,12 +2,21 @@ import pygame
 import pygame.gfxdraw
 import numpy as np
 from pool_simulation.constants import *
+import math
 
 COLOUR_MAP = {
-    0: (200, 30, 30),  # Red Ball
-    1: (240, 240, 40),  # Yellow Ball
-    2: (20, 20, 20),  # Black Ball
-    3: (255, 255, 255)  # Cue ball
+    0: (255, 255, 255),  # Cue ball
+    1: (200, 30, 30),  # Red Ball
+    2: (240, 240, 40),  # Yellow Ball
+    3: (20, 20, 20),  # Black Ball
+
+# --- Debug Colours ---
+    -1: (0, 255, 255),   # Cyan
+    -2: (255, 0, 255),   # Magenta
+    -3: (255, 128, 0),   # Orange
+    -4: (128, 0, 255),   # Neon Purple
+    -5: (0, 100, 255),   # Bright Blue
+    -6: (143, 255, 188)  # Light Green-Blue
 }
 
 WORLD_COLOURS = {
@@ -37,13 +46,19 @@ def draw_circular_arc(surface, color, center, radius, start_angle, end_angle, wi
     pygame.draw.arc(surface, color, rect, start_angle, end_angle, width)
 
 
-def make_ball_sprite(radius, colour, render_scale):
-    big_r = int(radius * render_scale)
-    big_surf = pygame.Surface((2 * big_r, 2 * big_r), pygame.SRCALPHA)
+def make_ball_sprite(float_radius, colour, render_scale):
+    float_diameter = float_radius * 2.0
+
+    big_d = int(round(float_diameter * render_scale))
+    big_r = big_d // 2
+
+    big_surf = pygame.Surface((big_d, big_d), pygame.SRCALPHA)
     pygame.draw.circle(big_surf, colour, (big_r, big_r), big_r)
-    # downscale once
+
+    target_d = int(round(float_diameter))
+
     small_surf = pygame.transform.smoothscale(
-        big_surf, (2 * radius, 2 * radius)
+        big_surf, (target_d, target_d)
     )
     return small_surf
 
@@ -66,15 +81,15 @@ class Renderer:
 
         self.ball_sprites = {
             c: make_ball_sprite(
-                int(self.sim.ob_radius * self.scale),
+                self.sim.ob_radius * self.scale,
                 COLOUR_MAP[c],
                 self.render_scale
             )
-            for c in [0, 1, 2]  # without cue ball
+            for c in COLOUR_MAP.keys() if c != 0  # without cue ball
         }
-        self.ball_sprites[3] = make_ball_sprite(
-                int(self.sim.cb_radius * self.scale),
-                COLOUR_MAP[3],
+        self.ball_sprites[0] = make_ball_sprite(
+                self.sim.cb_radius * self.scale,
+                COLOUR_MAP[0],
                 self.render_scale
             )
 
@@ -84,6 +99,13 @@ class Renderer:
         sx = self.width // 2 + x * self.scale
         sy = self.height // 2 - y * self.scale  # minus because pygame's Y grows downward
         return sx * screen_scale, sy * screen_scale
+
+    def screen_to_world(self, screen_pos):
+        """Convert Pygame pixel coordinates back to physics world meters."""
+        sx, sy = screen_pos
+        x = (sx - self.width // 2) / self.scale
+        y = (self.height // 2 - sy) / self.scale
+        return np.array([x, y])
 
     def draw_table(self):
         line_width = 1 * self.render_scale
@@ -240,16 +262,35 @@ class Renderer:
         return table_small
 
     def draw_balls(self):
-        for i in range(self.sim.n_balls + 1):
+        for i in range(self.sim.n_obj_balls + 1):
             if self.sim.in_play[i]:
                 pos = self.world_to_screen(self.sim.positions[i])
                 rect = self.ball_sprites[self.sim.colours[i]].get_rect(center=pos)
                 self.screen.blit(self.ball_sprites[self.sim.colours[i]], rect)
 
-    def render(self, fps=60):
+    def draw_spin_ui(self, tip_x: float, tip_y: float):
+        ui_radius = 40
+        margin = 20
+
+        center_x = self.width - ui_radius - margin
+        center_y = ui_radius + margin
+
+        pygame.draw.circle(self.screen, (240, 240, 240), (center_x, center_y), ui_radius)
+        pygame.draw.circle(self.screen, (50, 50, 50), (center_x, center_y), ui_radius, width=2)
+        pygame.draw.line(self.screen, (180, 180, 180), (center_x - ui_radius, center_y),
+                         (center_x + ui_radius, center_y))
+        pygame.draw.line(self.screen, (180, 180, 180), (center_x, center_y - ui_radius),
+                         (center_x, center_y + ui_radius))
+
+        dot_x = center_x + int(tip_x * ui_radius)
+        dot_y = center_y - int(tip_y * ui_radius)
+        pygame.draw.circle(self.screen, (255, 30, 30), (dot_x, dot_y), 5)
+
+    def render(self, fps=60, flip=True):
         """Draw the current frame."""
         self.screen.fill((40, 40, 40))  # clear
         self.screen.blit(self.table, (0, 0))
         self.draw_balls()
-        pygame.display.flip()
-        self.clock.tick(fps)
+        if flip:
+            pygame.display.flip()
+            self.clock.tick(fps)
