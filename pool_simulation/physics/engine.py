@@ -226,6 +226,90 @@ class Simulation:
             np.array([0, -1, -2, -3, -4, -5, -6])
         )
 
+    def set_up_randomly(self, num_balls: int):
+        """Randomly scatters balls, resolving overlaps by resting them microscopically close."""
+        if num_balls > self.n_obj_balls:
+            raise ValueError(f"Cannot place {num_balls} object balls, max is {self.n_obj_balls}")
+
+        self.positions.fill(0.0)
+        self.velocities.fill(0.0)
+        self.angular.fill(0.0)
+        self.in_play.fill(False)
+        self.ball_states.fill("STOPPED")
+        self.event_queue = []
+        self.time = 0.0
+        self.ball_versions.fill(0)
+
+        # 1. Place Cue Ball at the TRUE center
+        self.positions[0] = np.array([0.0, 0.0])
+        self.in_play[0] = True
+
+        # Table bounds
+        x_min, x_max = -0.8, 0.8
+        y_min, y_max = -0.4, 0.4
+
+        # Exact physics distance + your microscopic 1e-5 gap
+        safe_dist = (self.radii[1] * 2.0) + 1e-5
+
+        # 2. Place Object Balls
+        placed = 0
+        while placed < num_balls:
+            idx = placed + 1
+            candidate_pos = np.array([
+                np.random.uniform(x_min, x_max),
+                np.random.uniform(y_min, y_max)
+            ])
+
+            resolved = False
+            relaxation_steps = 0
+
+            # Push the ball out of overlaps until it sits perfectly clean
+            while not resolved and relaxation_steps < 50:
+                active_positions = self.positions[:idx]
+                distances = np.linalg.norm(active_positions - candidate_pos, axis=1)
+
+                # Are we clear?
+                if np.all(distances >= safe_dist):
+                    resolved = True
+                    break
+
+                # Find the ball we are overlapping with the most
+                worst_idx = np.argmin(distances)
+
+                # Calculate the vector FROM the existing ball TO our candidate
+                direction = candidate_pos - active_positions[worst_idx]
+                dist_norm = np.linalg.norm(direction)
+
+                # Edge case: If they spawned on the exact same pixel, pick a random direction
+                if dist_norm < 1e-8:
+                    direction = np.array([np.random.randn(), np.random.randn()])
+                    dist_norm = np.linalg.norm(direction)
+
+                direction /= dist_norm
+
+                # Slide the candidate outward along that vector until it microscopically touches
+                candidate_pos = active_positions[worst_idx] + (direction * safe_dist)
+
+                # Keep it strictly inside the cushions!
+                candidate_pos[0] = np.clip(candidate_pos[0], x_min, x_max)
+                candidate_pos[1] = np.clip(candidate_pos[1], y_min, y_max)
+
+                relaxation_steps += 1
+
+            # If it found a safe spot (or successfully clustered), lock it in!
+            if resolved:
+                self.positions[idx] = candidate_pos
+                self.in_play[idx] = True
+                self.colours[idx] = 1
+                placed += 1
+            # Note: If it hits 50 steps without resolving, it means it got trapped in a weird corner.
+            # The while loop will safely ignore it and generate a fresh random coordinate for this ball.
+
+        # 3. Initial physics prediction
+        mask = self.in_play.copy()
+        self.predict_cushion_collision_events(mask)
+        self.predict_pot_events(mask)
+
     def push_event(self, event):
         heapq.heappush(self.event_queue, event)
 
