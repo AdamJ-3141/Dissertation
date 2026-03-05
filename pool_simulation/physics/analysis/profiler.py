@@ -7,10 +7,10 @@ from pool_simulation.physics.engine import Simulation
 def profile_worst_case_scenario():
     sim = Simulation(n_obj_balls=15)
 
-    # 1. Set up a clustered table
+    # Set up a clustered table
     sim.set_up_randomly(15)
 
-    # 2. Fire the absolute maximum chaos shot
+    # Fire the absolute maximum chaos shot
     sim.strike_cue_ball(
         velocity_x=10.0,
         velocity_y=0.5,
@@ -20,7 +20,7 @@ def profile_worst_case_scenario():
 
     print("Running profiler on a 15-ball, 10m/s shot...")
 
-    # 3. Wrap the run() method in the profiler
+    # Wrap the run() method in the profiler
     profiler = cProfile.Profile()
     profiler.enable()
 
@@ -28,7 +28,7 @@ def profile_worst_case_scenario():
 
     profiler.disable()
 
-    # 4. Print the top 20 most time-consuming functions
+    # Print the top 20 most time-consuming functions
     print("\n--- Profiling Results ---")
     stats = pstats.Stats(profiler).sort_stats('cumtime')
     stats.print_stats(20)

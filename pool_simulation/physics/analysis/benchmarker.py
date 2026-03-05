@@ -9,7 +9,7 @@ def benchmark_break_shot(iterations=100):
 
     for _ in range(iterations):
         sim.reset_to_break()
-        # Fire a massive break shot
+        # Hit a massive break
         sim.strike_cue_ball(0.0, 8.5, 5.0, 0.0)
 
         # Run headlessly (simulates until all balls STOP)

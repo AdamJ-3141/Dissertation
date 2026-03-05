@@ -27,18 +27,15 @@ def run_performance_benchmark():
             for _ in range(trials_per_setup):
                 sim.set_up_randomly(n_balls)
 
-                # Fire the cue ball randomly to the right with varying speed
-                # Adding some random English to ensure complex cushion/spin evaluations
                 random_spin = np.random.uniform(-10.0, 10.0)
                 sim.strike_cue_ball(velocity_x=v, velocity_y=np.random.uniform(-0.5, 0.5),
                                     topspin=random_spin, sidespin=random_spin)
 
-                # Time the headless execution
                 start_time = time.perf_counter()
-                sim.run()  # No framerate = compute as fast as CPU allows
+                sim.run()
                 end_time = time.perf_counter()
 
-                times.append((end_time - start_time) * 1000)  # Convert to milliseconds
+                times.append((end_time - start_time) * 1000)
 
                 current_run += 1
                 if current_run % 20 == 0:
@@ -73,7 +70,7 @@ def run_performance_benchmark():
     plt.title("Physics Engine Performance:\nCompute Time vs. Table Complexity", fontsize=16, pad=15)
     plt.tight_layout()
 
-    # Save it in high-res for your dissertation
+    # Save it in high-res
     plt.savefig("dissertation_heatmap.png", dpi=300)
     print("\nBenchmark Complete! Saved 'dissertation_heatmap.png'")
     plt.show()
