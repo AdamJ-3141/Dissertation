@@ -79,6 +79,15 @@ class Renderer:
         pygame.display.set_caption("English Pool Simulation")
         self.clock = pygame.time.Clock()
 
+        self.cue_ball_spots = np.array([
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0]
+        ])
+
         self.ball_sprites = {
             c: make_ball_sprite(
                 self.sim.ob_radius * self.scale,
@@ -267,6 +276,36 @@ class Renderer:
                 pos = self.world_to_screen(self.sim.positions[i])
                 rect = self.ball_sprites[self.sim.colours[i]].get_rect(center=pos)
                 self.screen.blit(self.ball_sprites[self.sim.colours[i]], rect)
+                # DRAW THE ARAMITH MEASLES ON THE CUE BALL
+                if i == 0:
+                    pos_screen = self.world_to_screen(self.sim.positions[0])
+                    center_x = pos_screen[0]
+                    center_y = pos_screen[1]
+
+                    radius_px = self.sim.radii[0] * self.scale
+
+                    max_spot_size = radius_px * 0.25
+
+                    measle_color = (200, 30, 30)
+
+                    # Check all 6 spots
+                    for spot in self.cue_ball_spots:
+                        if spot[2] > 0.0:
+                            offset_x = spot[0] * radius_px
+                            offset_y = -spot[1] * radius_px
+
+                            spot_screen_x = center_x + offset_x
+                            spot_screen_y = center_y + offset_y
+
+                            # Foreshortening squish
+                            spot_radius = max(1, int(max_spot_size * spot[2]))
+
+                            pygame.draw.circle(
+                                self.screen,
+                                measle_color,
+                                (int(spot_screen_x), int(spot_screen_y)),
+                                spot_radius
+                            )
 
     def draw_spin_ui(self, tip_x: float, tip_y: float):
         ui_radius = 40
@@ -286,10 +325,38 @@ class Renderer:
         dot_y = center_y - int(tip_y * ui_radius)
         pygame.draw.circle(self.screen, (255, 30, 30), (dot_x, dot_y), 5)
 
+    def update_cue_ball_rotation(self, dt: float):
+        """Rotates the 6 visual measle spots on the cue ball based on 3D angular velocity."""
+        # Only process if the cue ball is actually on the table
+        if not self.sim.in_play[0]:
+            return
+
+        w = self.sim.angular[0]
+        w_norm = np.linalg.norm(w)
+
+        # If the cue ball is spinning
+        if w_norm > 1e-6:
+            axis = w / w_norm
+            theta = w_norm * dt
+
+            cos_t = math.cos(theta)
+            sin_t = math.sin(theta)
+
+            # v is shape (6, 3)
+            v = self.cue_ball_spots
+
+            cross_term = np.cross(axis[None, :], v)
+            dots = np.dot(v, axis).reshape(-1, 1)
+            dot_term = dots * axis * (1.0 - cos_t)
+            new_v = (v * cos_t) + (cross_term * sin_t) + dot_term
+            norms = np.linalg.norm(new_v, axis=1, keepdims=True)
+            self.cue_ball_spots = new_v / norms
+
     def render(self, fps=60, flip=True):
         """Draw the current frame."""
         self.screen.fill((40, 40, 40))  # clear
         self.screen.blit(self.table, (0, 0))
+        self.update_cue_ball_rotation(dt=1 / fps)
         self.draw_balls()
         if flip:
             pygame.display.flip()

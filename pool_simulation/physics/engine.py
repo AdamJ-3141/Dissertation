@@ -3,6 +3,7 @@ import numpy.typing as npt
 from pool_simulation.constants import *
 from .event import Event
 from .stronge_compliant import resolve_collinear_compliant_frictional_inelastic_collision
+from .solvers import fast_quartic_roots, fast_quadratic_roots
 import heapq
 import time
 
@@ -111,6 +112,17 @@ class Simulation:
             )
         except Exception as e:
             print(f"Warning: Numba warm-up failed. First collision will be slow. ({e})")
+
+        try:
+            from pool_simulation.physics.solvers import (
+                fast_quadratic_roots, fast_cubic_roots, fast_quartic_roots
+            )
+            # Pass arbitrary dummy floats just to force Numba to load the cache
+            _ = fast_quadratic_roots(1.0, -3.0, 2.0)
+            _ = fast_cubic_roots(1.0, -6.0, 11.0, -6.0)
+            _ = fast_quartic_roots(1.0, -10.0, 35.0, -50.0, 24.0)
+        except Exception as e:
+            print(f"Warning: Numba solver warm-up failed. First collision will be slow. ({e})")
 
     def reset(self, positions=None, colours=None, in_play=None):
         """Reset to given positions, or random if None."""
@@ -436,6 +448,7 @@ class Simulation:
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
         self.predict_roll_stop_events(mask)
+        self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
         self.predict_pot_events(mask)
@@ -465,8 +478,36 @@ class Simulation:
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
         self.predict_ball_collision_events(mask)
+        self.predict_spin_stop_events(mask)
         self.predict_cushion_collision_events(mask)
         self.predict_pot_events(mask)
+
+    def predict_spin_stop_events(self, ball_mask):
+        """Predicts the exact time a ball's Z-axis spin will decay to zero."""
+        spinning_mask = np.abs(self.angular[:, 2]) > 1e-6
+        final_mask = ball_mask & spinning_mask & self.in_play
+        valid_indices = np.where(final_mask)[0]
+
+        for i in valid_indices:
+            w_z = abs(self.angular[i, 2])
+            # The exact mathematical decay rate of z-spin
+            decay_rate = (5.0 * self.mu_sp * g) / (2.0 * self.radii[i])
+            delta_t = w_z / decay_rate
+            event_t = self.time + delta_t
+
+            event = Event(
+                t=event_t,
+                kind="SPIN_STOP",
+                i=i,
+                j=None,
+                version_i=self.ball_versions[i]
+            )
+            self.push_event(event)
+
+    def evaluate_spin_stop(self, event):
+        i = event.i
+        # Clamp the spin strictly to 0.0 to prevent floating point drift
+        self.angular[i, 2] = 0.0
 
     def _get_acceleration(self, i):
         state = self.ball_states[i]
@@ -515,18 +556,11 @@ class Simulation:
             # This prevents the solver from scheduling the collision for the exit time
             valid_times.append(0.0)
         else:
-            # Standard quartic evaluation for future collisions
-            coeffs = np.array([A, B, C, D, E])
-            coeffs[np.abs(coeffs) < 1e-12] = 0.0
+            roots = fast_quartic_roots(A, B, C, D, E)
 
-            roots = np.roots(coeffs)
-
-            for root in roots:
-                if abs(root.imag) < 1e-6:
-                    t = root.real
-                    # Accept immediate/touching collisions, broadening tolerance slightly
-                    if t > -1e-4:
-                        valid_times.append(max(0.0, t))
+            for t in roots:
+                if t > -1e-4:
+                    valid_times.append(max(0.0, t))
 
         # Queue the event if a collision happens in the future
         if valid_times:
@@ -663,6 +697,11 @@ class Simulation:
         # This prevents the solver from getting stuck in an infinite 0.0s collision loop.
         dp = self.positions[i] - self.positions[j]
         dist = np.linalg.norm(dp)
+
+        if dist < 1e-8:
+            dp = np.array([1e-8, 0.0])
+            dist = 1e-8
+
         R_sum = self.radii[i] + self.radii[j]
 
         overlap = R_sum - dist
@@ -683,6 +722,7 @@ class Simulation:
         mask[j] = True
 
         self.predict_slide_roll_events(mask)
+        self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
         self.predict_pot_events(mask)
@@ -718,17 +758,14 @@ class Simulation:
                     coeffs = np.array([0.5 * a_n, v_n, p_n - offset])
                     coeffs[np.abs(coeffs) < 1e-12] = 0.0
 
-                    roots = np.roots(coeffs)
-                    for root in roots:
-                        if abs(root.imag) < 1e-6:
-                            t = root.real
-                            if t > 1e-5:
-                                # Verify the collision happens WITHIN the finite segment bounds
-                                P_hit = P0 + (V0 * t) + (0.5 * A * (t ** 2))
-                                projection = np.dot(P_hit - P1, u_hat)
-
-                                if 0 <= projection <= L:
-                                    valid_times.append((t, ('line', idx)))
+                    roots = fast_quadratic_roots(*coeffs)
+                    for t in roots:
+                        if t > 1e-6:
+                            # Verify the collision happens WITHIN the finite segment bounds
+                            P_hit = P0 + (V0 * t) + (0.5 * A * (t ** 2))
+                            projection = np.dot(P_hit - P1, u_hat)
+                            if 0 <= projection <= L:
+                                valid_times.append((t, ('line', idx)))
 
             # 2. Check Corner Circles (No distance filter!)
             for idx, (cx, cy, cr) in enumerate(self.circles):
@@ -745,12 +782,10 @@ class Simulation:
                 coeffs = np.array([A_c, B_c, C_c, D_c, E_c])
                 coeffs[np.abs(coeffs) < 1e-12] = 0.0
 
-                roots = np.roots(coeffs)
-                for root in roots:
-                    if abs(root.imag) < 1e-6:
-                        t = root.real
-                        if t > 1e-5:
-                            valid_times.append((t, ('circle', idx)))
+                roots = fast_quartic_roots(*coeffs)
+                for t in roots:
+                    if t > 1e-6:
+                        valid_times.append((t, ('circle', idx)))
 
             # 3. Queue the Earliest Event
             if valid_times:
@@ -886,6 +921,7 @@ class Simulation:
         mask[i] = True
 
         self.predict_slide_roll_events(mask)
+        self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
         self.predict_cushion_collision_events(mask)
         self.predict_pot_events(mask)
@@ -922,14 +958,12 @@ class Simulation:
                 coeffs = np.array([A_c, B_c, C_c, D_c, E_c])
                 coeffs[np.abs(coeffs) < 1e-12] = 0.0
 
-                roots = np.roots(coeffs)
+                roots = fast_quartic_roots(*coeffs)
                 pocket_roots = []
 
-                for root in roots:
-                    if abs(root.imag) < 1e-6:
-                        t = root.real
-                        if t > 1e-5:
-                            pocket_roots.append(t)
+                for t in roots:
+                    if t > 1e-5:
+                        pocket_roots.append(t)
 
                 # We need both an entry and exit time to evaluate the chord
                 if len(pocket_roots) >= 2:
@@ -1058,6 +1092,7 @@ class Simulation:
             moving_mask = np.asarray(self.ball_states != "STOPPED", dtype=bool)
             if np.any(moving_mask):
                 self.predict_slide_roll_events(moving_mask)
+                self.predict_spin_stop_events(moving_mask)
                 self.predict_ball_collision_events(moving_mask)
                 self.predict_cushion_collision_events(moving_mask)
                 self.predict_pot_events(moving_mask)
@@ -1131,6 +1166,8 @@ class Simulation:
                     self.evaluate_slide_roll(event)
                 case "ROLL_STOP":
                     self.evaluate_roll_stop(event)
+                case "SPIN_STOP":
+                    self.evaluate_spin_stop(event)
                 case "BALL_COLLISION":
                     self.evaluate_ball_collision(event)
                 case "CUSHION_COLLISION":
@@ -1165,10 +1202,15 @@ class Simulation:
                 print(f"Evaluated in {time.time()-start}")
                 print("-" * 50)
 
-            if framerate and frame_callback:
-                frame_callback(self)
+            # if framerate and frame_callback:
+            #     frame_callback(self)
 
-            if np.all(self.ball_states[self.in_play] == "STOPPED"):
+            is_stopped = np.all(self.ball_states[self.in_play] == "STOPPED")
+            is_not_spinning = np.all(np.abs(self.angular[self.in_play, 2]) < 1e-6)
+
+            if is_stopped and is_not_spinning:
+                if framerate and frame_callback:
+                    frame_callback(self)
                 self.event_queue.clear()
                 break
 

@@ -10,14 +10,6 @@ def main():
     sim.reset_to_break()
     renderer = Renderer(sim)
 
-    def live_render(simulation_instance):
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit()
-                exit()
-        renderer.render(fps=60)
-        # We don't draw the UI during the shot to keep it clean, but you can if you want!
-
     running = True
 
     # Normalized tip position (-1.0 to 1.0)
@@ -78,10 +70,8 @@ def main():
                     if dist > 1e-4:
                         v_hat = direction / dist
                         # Let's scale speed slightly based on how far you drag the mouse!
-                        # 5.0 multiplier means clicking 1 meter away = 5.0 m/s shot
                         shot_velocity = v_hat * min(8.0, dist * 5.0)
-
-                        max_spin_rads = 40.0
+                        max_spin_rads = 80.0
 
                         sim.strike_cue_ball(
                             velocity_x=shot_velocity[0],
@@ -91,7 +81,48 @@ def main():
                             elevation_deg=0.0
                         )
 
-                        sim.run(framerate=60.0, frame_callback=live_render)
+                        # ==========================================
+                        # 1. PRE-CALCULATE (RECORD) THE SHOT
+                        # ==========================================
+                        playback_frames = []
+
+                        def record_frame(simulation_instance):
+                            # Deep copy the exact physical state at this 1/60th second mark
+                            playback_frames.append({
+                                'positions': simulation_instance.positions.copy(),
+                                'angular': simulation_instance.angular.copy(),
+                                'in_play': simulation_instance.in_play.copy(),
+                                'ball_states': simulation_instance.ball_states.copy()
+                            })
+
+                        print("Calculating physics...")
+                        sim.run(framerate=60.0, frame_callback=record_frame)
+                        print(f"Calculated {len(playback_frames)} frames. Playing back...")
+
+                        # ==========================================
+                        # 2. PLAYBACK THE CACHED FRAMES
+                        # ==========================================
+                        for frame in playback_frames:
+                            # Allow closing the window during playback
+                            for evt in pygame.event.get():
+                                if evt.type == pygame.QUIT:
+                                    running = False
+                                    break
+                            if not running:
+                                break
+
+                            # Temporarily inject the cached state back into the simulation object
+                            # so the renderer can read it perfectly.
+                            sim.positions = frame['positions']
+                            sim.angular = frame['angular']
+                            sim.in_play = frame['in_play']
+                            sim.ball_states = frame['ball_states']
+
+                            # Render the frame and force a strict 60 FPS delay
+                            renderer.render(fps=60, flip=True)
+                            renderer.clock.tick(60)
+
+                        print("Shot complete.")
 
     pygame.quit()
 
