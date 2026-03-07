@@ -267,6 +267,23 @@ class Renderer:
         rect = (min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
         pygame.draw.rect(table_surface, WORLD_COLOURS["Black"], rect, width=int(0.005 * line_width * self.scale))
 
+        # baulk line
+        bx1, by1 = self.world_to_screen((-TABLE_WIDTH / 2 + TABLE_WIDTH / 5, TABLE_HEIGHT / 2),
+                                        screen_scale=self.render_scale)
+        bx2, by2 = self.world_to_screen((-TABLE_WIDTH / 2 + TABLE_WIDTH / 5, -TABLE_HEIGHT / 2),
+                                        screen_scale=self.render_scale)
+
+        # Calculate width, ensuring it is at least 1 pixel thick so Pygame actually renders it
+        baulk_width = int(line_width)
+
+        pygame.draw.circle(table_surface, WORLD_COLOURS["Black"],
+                           self.world_to_screen((BLACK_SPOT_X, 0), screen_scale=self.render_scale),
+                           2*line_width, width=3*line_width)
+
+        pygame.draw.line(table_surface, WORLD_COLOURS["Black"],
+                         (bx1, by1), (bx2, by2),
+                         width=baulk_width)
+
         table_small = pygame.transform.smoothscale_by(table_surface, 1 / self.render_scale)
         return table_small
 

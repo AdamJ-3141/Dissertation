@@ -7,7 +7,7 @@ from pool_simulation.render import Renderer
 
 def main():
     sim = Simulation(n_obj_balls=15)
-    sim.reset_to_break()
+    sim.set_up_randomly(15)
     renderer = Renderer(sim)
 
     running = True
@@ -15,7 +15,7 @@ def main():
     # Normalized tip position (-1.0 to 1.0)
     tip_x = 0.0  # + is Right English, - is Left English
     tip_y = 0.0  # + is Topspin, - is Backspin
-    spin_step = 0.1  # How much the dot moves per key press
+    spin_step = 0.05  # How much the dot moves per key press
 
     print("Game Started! Use Arrow Keys to set spin. Click to shoot.")
 
@@ -71,13 +71,12 @@ def main():
                         v_hat = direction / dist
                         # Let's scale speed slightly based on how far you drag the mouse!
                         shot_velocity = v_hat * min(8.0, dist * 5.0)
-                        max_spin_rads = 80.0
 
                         sim.strike_cue_ball(
                             velocity_x=shot_velocity[0],
                             velocity_y=shot_velocity[1],
-                            topspin=tip_y * max_spin_rads,
-                            sidespin=tip_x * max_spin_rads,
+                            topspin_offset=tip_y,
+                            sidespin_offset=tip_x,
                             elevation_deg=0.0
                         )
 
@@ -96,7 +95,7 @@ def main():
                             })
 
                         print("Calculating physics...")
-                        sim.run(framerate=60.0, frame_callback=record_frame)
+                        data = sim.run(framerate=60.0, frame_callback=record_frame)
                         print(f"Calculated {len(playback_frames)} frames. Playing back...")
 
                         # ==========================================
@@ -123,6 +122,10 @@ def main():
                             renderer.clock.tick(60)
 
                         print("Shot complete.")
+
+                        print(data)
+
+                        print()
 
     pygame.quit()
 

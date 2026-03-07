@@ -88,6 +88,13 @@ class Simulation:
 
         self.time = 0.0
         self.event_queue = []
+        self.shot_data = {
+            "first_ball_hit": None,
+            "cushion_after_ball": False,
+            "balls_potted": [],
+            "sim_time": 0.0,
+            "error": False
+        }
 
         # Numba takes ~0.6s to compile the Stronge model on the first call.
         # We call it here with dummy physics values so the first real shot is instant.
@@ -252,15 +259,27 @@ class Simulation:
         self.time = 0.0
         self.ball_versions.fill(0)
 
-        # 1. Place Cue Ball at the TRUE center
-        self.positions[0] = np.array([0.0, 0.0])
+        self.colours.fill(0)  # Reset everything to cue ball color (0)
+
+        if num_balls > 0:
+            # Create a standard WEPF set: 7 Reds (1), 7 Yellows (2), 1 Black (3)
+            available_colors = [1] * 7 + [2] * 7
+            np.random.shuffle(available_colors)
+
+            # Deal out exactly 'num_balls' colors into the active slots
+            self.colours[1:num_balls] = available_colors[:num_balls - 1]
+            self.colours[num_balls] = 3
+
+        # Place Cue Ball randomly
+        self.positions[0] = (np.array([TABLE_WIDTH, TABLE_HEIGHT]) *
+                             np.random.random((1,2)) - np.array([TABLE_WIDTH / 2, TABLE_HEIGHT / 2]))
         self.in_play[0] = True
 
         # Table bounds
-        x_min, x_max = -0.8, 0.8
-        y_min, y_max = -0.4, 0.4
+        x_min, x_max = -TABLE_WIDTH/2 + self.ob_radius, TABLE_WIDTH/2 - self.ob_radius
+        y_min, y_max = -TABLE_HEIGHT/2 + self.ob_radius, TABLE_HEIGHT/2 - self.ob_radius
 
-        # Exact physics distance + your microscopic 1e-5 gap
+        # Exact physics distance + microscopic 1e-5 gap
         safe_dist = (self.radii[1] * 2.0) + 1e-5
 
         # 2. Place Object Balls
@@ -312,7 +331,6 @@ class Simulation:
             if resolved:
                 self.positions[idx] = candidate_pos
                 self.in_play[idx] = True
-                self.colours[idx] = 1
                 placed += 1
             # Note: If it hits 50 steps without resolving, it means it got trapped in a weird corner.
             # The while loop will safely ignore it and generate a fresh random coordinate for this ball.
@@ -347,7 +365,7 @@ class Simulation:
 
         return None
 
-    def move_cue_ball(self, p: npt.NDArray[np.float64]):
+    def move_cue_ball(self, p: npt.NDArray[np.float64], baulk=False):
         other_balls_mask = self.in_play.copy()
         other_balls_mask[0] = False
 
@@ -361,6 +379,10 @@ class Simulation:
 
             if np.any(distances < safe_distances):
                 raise ValueError("Invalid Placement: Cue ball overlaps with another ball.")
+        if abs(p[0]) > TABLE_WIDTH/2 - self.cb_radius or abs(p[1]) > TABLE_HEIGHT/2 - self.cb_radius:
+            raise ValueError("Invalid Placement: Cue ball is not on playing surface.")
+        if baulk and p[0] > -TABLE_WIDTH/2 + TABLE_WIDTH/5:
+            raise ValueError("Invalid Placement: Cue ball is outside of baulk.")
 
         self.positions[0] = p
         self.ball_versions[0] += 1
@@ -377,14 +399,15 @@ class Simulation:
         self.ball_states[ball_mask] = "SLIDING"
         self.ball_versions[ball_mask] += 1
 
-    def strike_cue_ball(self, velocity_x: float, velocity_y: float, topspin: float = 0.0, sidespin: float = 0.0,
+    def strike_cue_ball(self, velocity_x: float, velocity_y: float,
+                        topspin_offset: float = 0.0, sidespin_offset: float = 0.0,
                         elevation_deg: float = 0.0):
         """
-        topspin: Positive for forward, Negative for backspin (screw/draw).
-        sidespin: Positive for right spin (spins CCW), Negative for left english.
-        elevation_deg: Cue elevation angle. > 0 tilts the sidespin axis to create swerve.
+        topspin_offset: Vertical tip offset fraction [-1.0 (bottom/draw) to 1.0 (top/follow)].
+        sidespin_offset: Horizontal tip offset fraction [-1.0 (left english) to 1.0 (right english)].
+        elevation_deg: Cue elevation angle in degrees.
         """
-        v = np.array([velocity_x, velocity_y])
+        v = np.array([velocity_x, velocity_y], dtype=np.float64)
         v_norm = np.linalg.norm(v)
 
         if v_norm < 1e-8:
@@ -394,26 +417,34 @@ class Simulation:
         v_dir = v / v_norm
         v_perp = np.array([-v_dir[1], v_dir[0]])  # Perpendicular points "Left" of the shot line
 
-        # 2. Local Spin Components
+        # ==========================================
+        # 2. PROPER CUE STRIKING PHYSICS
+        # ==========================================
+        # Calculate the base spin magnitude relative to the shot speed
+        # Formula: w = (5/2) * offset * (v / R)
+        R = float(self.radii[0])
+        base_spin_magnitude = (2.5 * float(v_norm)) / R
+
+        # Scale the input tip offsets by this physical magnitude
+        w_perp = topspin_offset * base_spin_magnitude
+        w_z_raw = sidespin_offset * base_spin_magnitude
+
+        # 3. Apply Cue Elevation (Swerve/Massé factor)
         elevation_rad = np.radians(elevation_deg)
 
-        # Spin along the perpendicular axis (Standard Topspin/Draw)
-        w_perp = topspin
-
         # Spin along the vertical Z-axis (Standard Sidespin)
-        w_z = sidespin * np.cos(elevation_rad)
+        w_z = w_z_raw * np.cos(elevation_rad)
 
         # Spin along the direction of travel (The Massé / Swerve factor!)
-        # Elevating the cue tilts the sidespin axis forward into the cloth.
-        w_dir = sidespin * np.sin(elevation_rad)
+        w_dir = w_z_raw * np.sin(elevation_rad)
 
-        # 3. Convert local spin to global world coordinates
+        # 4. Convert local spin to global world coordinates
         w_world_x = (w_dir * v_dir[0]) + (w_perp * v_perp[0])
         w_world_y = (w_dir * v_dir[1]) + (w_perp * v_perp[1])
 
         angular_velocity = np.array([w_world_x, w_world_y, w_z])
 
-        # 4. Fire the shot!
+        # 5. Fire the shot!
         active_mask = np.zeros(self.n_obj_balls + 1, dtype=bool)
         active_mask[0] = True
 
@@ -721,6 +752,12 @@ class Simulation:
         mask[i] = True
         mask[j] = True
 
+        if i == 0 or j == 0 and not self.shot_data["first_ball_hit"]:
+            if i == 0:
+                self.shot_data["first_ball_hit"] = j
+            else:
+                self.shot_data["first_ball_hit"] = i
+
         self.predict_slide_roll_events(mask)
         self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
@@ -920,6 +957,10 @@ class Simulation:
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
 
+        if self.shot_data["cushion_after_ball"] == False:
+            if self.shot_data["first_ball_hit"]:
+                self.shot_data["cushion_after_ball"] = True
+
         self.predict_slide_roll_events(mask)
         self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
@@ -947,7 +988,7 @@ class Simulation:
 
                 if np.dot(dp, dp) < (pr ** 2):
                     valid_times.append((0.0, idx))
-                    continue  # Skip the complex chord math for this pocket
+                    continue
 
                 A_c = 0.25 * np.dot(A, A)
                 B_c = np.dot(A, V0)
@@ -965,7 +1006,7 @@ class Simulation:
                     if t > 1e-5:
                         pocket_roots.append(t)
 
-                # We need both an entry and exit time to evaluate the chord
+                # need both an entry and exit time to evaluate the chord
                 if len(pocket_roots) >= 2:
                     pocket_roots.sort()
                     t_entry = pocket_roots[0]
@@ -980,20 +1021,10 @@ class Simulation:
                     b_dist = np.linalg.norm(P_closest - Pc)
                     hit_fraction = float(b_dist) / pr
 
-                    # ==========================================
-                    # THE CHORD / RATTLE HEURISTIC
-                    # ==========================================
                     if hit_fraction < 0.7:
-                        # Solid Hit (Center cut or slightly off-center)
-                        # The ball hits the back liner of the pocket. It drops regardless of speed.
                         valid_times.append((t_entry, idx))
                     elif delta_t > t_drop:
-                        # Grazing Hit (Small chord length) BUT moving slow enough to fall
                         valid_times.append((t_entry, idx))
-
-                    # IF Grazing Hit AND too fast:
-                    # We do nothing! The event is ignored, and the cushion predictor
-                    # will naturally crash the ball into the far circular jaw instead!
 
             if valid_times:
                 time_to_drop, pocket_idx = min(valid_times, key=lambda x: x[0])
@@ -1022,10 +1053,7 @@ class Simulation:
         self.positions[i] = np.array([999.0, 999.0])
 
         self.ball_versions[i] += 1
-
-        # If the cue ball (0) is potted
-        if i == 0:
-            print("SCRATCH! Cue ball potted.")
+        self.shot_data["balls_potted"].append(i)
 
     def advance_physics_state(self, dt):
         if dt <= 0.0:
@@ -1096,6 +1124,14 @@ class Simulation:
                 self.predict_ball_collision_events(moving_mask)
                 self.predict_cushion_collision_events(moving_mask)
                 self.predict_pot_events(moving_mask)
+
+        self.shot_data = {
+            "first_ball_hit": None,
+            "cushion_after_ball": False,
+            "balls_potted": [],
+            "sim_time": 0.0,
+            "error": False
+        }
 
         if framerate and frame_callback:
             frame_dt = 1.0 / framerate
@@ -1172,10 +1208,9 @@ class Simulation:
                     self.evaluate_ball_collision(event)
                 case "CUSHION_COLLISION":
                     self.evaluate_cushion_collision(event)
-                    pass
                 case "POT":
                     self.evaluate_pot(event)
-                    pass
+
                 case _:
                     raise ValueError(f"Unknown event kind: {event.kind}")
 
@@ -1202,9 +1237,6 @@ class Simulation:
                 print(f"Evaluated in {time.time()-start}")
                 print("-" * 50)
 
-            # if framerate and frame_callback:
-            #     frame_callback(self)
-
             is_stopped = np.all(self.ball_states[self.in_play] == "STOPPED")
             is_not_spinning = np.all(np.abs(self.angular[self.in_play, 2]) < 1e-6)
 
@@ -1214,4 +1246,10 @@ class Simulation:
                 self.event_queue.clear()
                 break
 
-        return time.perf_counter() - start_time
+        self.shot_data["sim_time"] = time.perf_counter() - start_time
+        p = self.positions[0]
+        if (abs(p[0]) > TABLE_WIDTH/2 + CUSHION_WIDTH - self.cb_radius
+                or abs(p[1]) > TABLE_HEIGHT/2 + CUSHION_WIDTH - self.cb_radius) and self.in_play[0]:
+            self.shot_data["error"] = True
+
+        return self.shot_data
