@@ -3,6 +3,7 @@ import numpy as np
 import math
 from pool_simulation.physics.engine import Simulation
 from pool_simulation.render import Renderer
+from evolution import Match, Agent
 
 
 def main():

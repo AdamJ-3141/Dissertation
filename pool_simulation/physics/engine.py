@@ -13,7 +13,7 @@ class Simulation:
                  cb_radius=CUE_BALL_RADIUS, cb_mass=CUE_BALL_MASS,
                  ob_radius=OBJECT_BALL_RADIUS, ob_mass=OBJECT_BALL_MASS,
                  mu_s=MU_S, mu_r=MU_R, mu_sp = MU_SP, mu_b = MU_B, e_c = E_C,
-                 mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T):
+                 mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T, start_break=False):
 
         self.n_obj_balls = n_obj_balls
         self.table_width = TABLE_WIDTH
@@ -93,8 +93,11 @@ class Simulation:
             "cushion_after_ball": False,
             "balls_potted": [],
             "sim_time": 0.0,
-            "error": False
+            "error": False,
+            "error_balls": [],
+            "balls_past_middle": set()
         }
+        self.is_break = start_break
 
         # Numba takes ~0.6s to compile the Stronge model on the first call.
         # We call it here with dummy physics values so the first real shot is instant.
@@ -1130,7 +1133,9 @@ class Simulation:
             "cushion_after_ball": False,
             "balls_potted": [],
             "sim_time": 0.0,
-            "error": False
+            "error": False,
+            "error_balls": [],
+            "balls_past_middle": set()
         }
 
         if framerate and frame_callback:
@@ -1214,6 +1219,17 @@ class Simulation:
                 case _:
                     raise ValueError(f"Unknown event kind: {event.kind}")
 
+            if self.is_break:
+                if "balls_past_centre" not in self.shot_data:
+                    self.shot_data["balls_past_centre"] = set()
+
+                for ind in range(1, self.n_obj_balls + 1):
+                    if self.in_play[ind]:
+                        # Assuming baulk is -X, the center line is x=0.
+                        # A ball has passed the line if its whole volume is over it.
+                        if self.positions[ind, 0] < -self.radii[ind]:
+                            self.shot_data["balls_past_centre"].add(ind)
+
             if verbose:
                 if event.j is None or isinstance(event.j, tuple):
                     # Single ball state changed (Slide/Roll/Stop or Cushion Bounce)
@@ -1247,9 +1263,13 @@ class Simulation:
                 break
 
         self.shot_data["sim_time"] = time.perf_counter() - start_time
-        p = self.positions[0]
-        if (abs(p[0]) > TABLE_WIDTH/2 + CUSHION_WIDTH - self.cb_radius
-                or abs(p[1]) > TABLE_HEIGHT/2 + CUSHION_WIDTH - self.cb_radius) and self.in_play[0]:
-            self.shot_data["error"] = True
+        for ind, p in enumerate(self.positions):
+            if (abs(p[0]) > TABLE_WIDTH/2 + CUSHION_WIDTH - self.radii[ind]
+                    or abs(p[1]) > TABLE_HEIGHT/2 + CUSHION_WIDTH - self.radii[ind]) and self.in_play[ind]:
+                self.shot_data["error"] = True
+                self.shot_data["error_balls"].append(ind)
+
+        if self.is_break:
+            self.is_break = False
 
         return self.shot_data
