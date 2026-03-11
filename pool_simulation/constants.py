@@ -27,3 +27,23 @@ BETA_N = 1.0  # Normal mass-matrix coefficient
 BETA_T = 3.5  # Tangential mass-matrix coefficient (1 + mR^2/I = 1 + 2.5 = 3.5)
 g = 9.80665
 RESTITUTION = 1.0
+MAX_SPEED = 10  # m/s
+FPS = 60
+COLOUR_MAP = {
+    0: (255, 255, 255),  # Cue ball
+    1: (200, 30, 30),  # Red Ball
+    2: (240, 240, 40),  # Yellow Ball
+    3: (20, 20, 20),  # Black Ball
+
+# --- Debug Colours ---
+    -1: (0, 255, 255),   # Cyan
+    -2: (255, 0, 255),   # Magenta
+    -3: (255, 128, 0),   # Orange
+    -4: (128, 0, 255),   # Neon Purple
+    -5: (0, 100, 255),   # Bright Blue
+    -6: (143, 255, 188)  # Light Green-Blue
+}
+COLOUR_NAMES = {
+    1: "Red",
+    2: "Yellow"
+}

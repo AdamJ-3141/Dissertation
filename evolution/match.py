@@ -1,7 +1,7 @@
-from pool_simulation.constants import BLACK_SPOT_X
+from pool_simulation.constants import *
 from pool_simulation.physics import Simulation
 from enum import Enum
-from agent import Agent
+from .agent import Agent
 import numpy as np
 
 
@@ -29,20 +29,32 @@ class Match:
         else:
             self.engine.set_up_randomly(engine.n_obj_balls)
 
-    def is_on_black(self, turn):
-        """Checks if the player has cleared all their designated colored balls."""
+    def was_on_black(self, turn, potted_this_shot=None):
+        """Checks if the player was on the black before the shot occurred."""
         if self.open_table:
             return False
 
+        if potted_this_shot is None:
+            potted_this_shot = []
+
         color = self.player_colours[turn]
         for i in range(1, self.engine.n_obj_balls + 1):
-            if self.engine.in_play[i] and self.engine.colours[i] == color:
+            # If the ball is still on the table OR was just potted, the player wasn't on the black!
+            if (self.engine.in_play[i] or i in potted_this_shot) and self.engine.colours[i] == color:
                 return False
         return True
 
-    def play_turn(self, agent: Agent):
+    def play_turn(self, agent: Agent, frame_callback=None):
         if self.turn_state == TurnState.GAME_OVER:
-            return
+            return self.winner
+
+        if self.is_break_shot:
+            print(f"Player {self.turn + 1} to break.")
+        else:
+            if self.open_table:
+                print(f"Player {self.turn + 1} to play. Open Table.")
+            else:
+                print(f"Player {self.turn + 1}: {COLOUR_NAMES[self.player_colours[self.turn]]} Balls in play.")
 
         # 1. Handle Ball in Hand placements
         if self.turn_state in [TurnState.BALL_IN_HAND_BAULK, TurnState.BALL_IN_HAND]:
@@ -62,17 +74,18 @@ class Match:
             self.turn_state = TurnState.NORMAL
 
         # 2. Get and execute shot
-        vel_x, vel_y, tip_x, tip_y, cue_elev = agent.get_shot_parameters(
+        vel_x, vel_y, tip_y, tip_x, cue_elev = agent.get_shot_parameters(
             self.engine.colours,
             self.engine.in_play,
             self.engine.positions
         )
 
-        self.engine.strike_cue_ball(vel_x, vel_y, tip_x, tip_y, cue_elev)
-        shot_data = self.engine.run()
+        self.engine.strike_cue_ball(vel_x, vel_y, tip_y, tip_x, cue_elev)
+        shot_data = self.engine.run(framerate=FPS, frame_callback=frame_callback)
 
         # 3. Referee evaluates the result
         self.evaluate_shot(shot_data)
+        return None
 
     def respot_ball(self, ball_idx):
         """Places a ball on the black spot, or slides it towards the top cushion if blocked."""
@@ -124,11 +137,12 @@ class Match:
         self.engine.ball_versions[ball_idx] += 1
 
     def evaluate_shot(self, shot_data: dict):
+        print(shot_data)
         first_hit = shot_data.get("first_ball_hit")
         potted = shot_data.get("balls_potted", [])
-        cushion = shot_data.get("cushion_after_impact", False)
+        cushion = shot_data.get("cushion_after_ball", False)
         error_balls = shot_data.get("error_balls", [])  # List of ball indices that left the table
-        balls_past_centre = shot_data.get("balls_past_centre", set())  # Set of balls that crossed the line
+        balls_past_middle = shot_data.get("balls_past_middle", set())  # Set of balls that crossed the line
 
         # ==========================================
         # 1. HANDLE BALLS OFF THE TABLE (Rules 6l & 6m)
@@ -145,25 +159,12 @@ class Match:
         if self.is_break_shot:
             self.is_break_shot = False  # Table remains open after break regardless
 
-            # Rule 4i: 8-ball potted on break is re-spotted, NOT loss of frame
-            if 3 in [self.engine.colours[i] for i in potted]:
-                for idx in potted:
-                    if self.engine.colours[idx] == 3:
-                        self.respot_ball(idx)
-                        potted.remove(idx)
-
-            # Rule 4j: Fouls on the break
-            if 0 in potted:  # In-off
-                self.turn = 1 - self.turn
-                self.turn_state = TurnState.BALL_IN_HAND_BAULK
-                return
-            elif cue_ball_off_table:
-                self.turn = 1 - self.turn
-                self.turn_state = TurnState.BALL_IN_HAND
-                return
+            # Do not count the cue ball as a point!
+            obj_potted = [b for b in potted if b != 0]
 
             # Rule 4f: The 3-Point Rule
-            break_points = len(potted) + len(balls_past_centre)
+            break_points = len(obj_potted) + len(balls_past_middle)
+
             if break_points < 3:
                 print("Failure to perform legal break. Re-rack required.")
                 self.turn = 1 - self.turn
@@ -173,9 +174,38 @@ class Match:
                 self.is_break_shot = True
                 return
 
-            # Legal break. If nothing potted, pass turn.
-            if len(potted) == 0:
+            # --- FROM HERE ON, THE BREAK WAS LEGAL (>= 3 Points) ---
+
+            # Rule 4i: 8-ball potted on break is re-spotted, NOT loss of frame
+            if 3 in [self.engine.colours[i] for i in obj_potted]:
+                print("8-Ball Potted on Break, Re-Spot.")
+                for idx in obj_potted:
+                    if self.engine.colours[idx] == 3:
+                        self.respot_ball(idx)
+                        potted.remove(idx)
+
+            # Rule 4j: Fouls on the break
+            if 0 in potted:  # In-off
+                print("Cue Ball Potted on break: Ball in hand from baulk")
                 self.turn = 1 - self.turn
+                self.turn_state = TurnState.BALL_IN_HAND_BAULK
+                return
+            elif cue_ball_off_table:
+                print("Cue Ball glitched off table: Ball in hand")
+                self.turn = 1 - self.turn
+                self.turn_state = TurnState.BALL_IN_HAND
+                return
+            elif first_hit is None or self.engine.colours[first_hit] == 3:
+                print("Standard foul on the break: Ball in hand")
+                self.turn = 1 - self.turn
+                self.turn_state = TurnState.BALL_IN_HAND
+                return
+
+            # Legal break. If nothing potted, pass turn.
+            if len(obj_potted) == 0:
+                print("Legal Break")
+                self.turn = 1 - self.turn
+
             return
 
         # ==========================================
@@ -184,16 +214,19 @@ class Match:
         is_foul = False
 
         if first_hit is None or 0 in potted or cue_ball_off_table:
+            print("Foul. Ball in hand.")
             is_foul = True
         else:
             hit_color = self.engine.colours[first_hit]
             if self.open_table:
                 if hit_color == 3:
+                    print("Foul (Black ball hit first). Ball in hand.")
                     is_foul = True
             else:
-                expected_color = 3 if self.is_on_black(self.turn) else self.player_colours[self.turn]
+                expected_color = 3 if self.was_on_black(self.turn, potted) else self.player_colours[self.turn]
                 if hit_color != expected_color:
                     is_foul = True
+                    print("Foul (Did not hit expected colour). Ball in hand.")
 
         if len(potted) == 0 and not cushion:
             is_foul = True
@@ -205,10 +238,11 @@ class Match:
 
         if 3 in potted_colors:
             self.turn_state = TurnState.GAME_OVER
-            if is_foul or not self.is_on_black(self.turn):
+            if is_foul or not self.was_on_black(self.turn, potted):
                 self.winner = 1 - self.turn
             else:
                 self.winner = self.turn
+            print("Black Ball Potted.")
             return
 
         # ==========================================

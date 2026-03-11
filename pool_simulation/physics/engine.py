@@ -205,6 +205,8 @@ class Simulation:
 
         final_positions = base_positions + jitter
 
+        self.is_break = True
+
         # 5. Reset the engine with the matched WEPF color array
         self.reset(
             final_positions,
@@ -349,7 +351,7 @@ class Simulation:
     def pop_event(self):
         return heapq.heappop(self.event_queue)
 
-    def get_next_valid_event(self):
+    def get_next_valid_event(self) -> Event | None:
         """Pops events until a valid one is found, or the queue is empty."""
         while self.event_queue:
             event = self.pop_event()
@@ -388,6 +390,7 @@ class Simulation:
             raise ValueError("Invalid Placement: Cue ball is outside of baulk.")
 
         self.positions[0] = p
+        self.in_play[0] = True
         self.ball_versions[0] += 1
 
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
@@ -755,7 +758,7 @@ class Simulation:
         mask[i] = True
         mask[j] = True
 
-        if i == 0 or j == 0 and not self.shot_data["first_ball_hit"]:
+        if (i == 0 or j == 0) and self.shot_data["first_ball_hit"] is None:
             if i == 0:
                 self.shot_data["first_ball_hit"] = j
             else:
@@ -1058,9 +1061,9 @@ class Simulation:
         self.ball_versions[i] += 1
         self.shot_data["balls_potted"].append(i)
 
-    def advance_physics_state(self, dt):
+    def advance_physics_state(self, dt, inplace=True):
         if dt <= 0.0:
-            return
+            return None if inplace else self.positions, self.velocities, self.angular, self.in_play
 
         slide_mask = self.ball_states == "SLIDING"
         if np.any(slide_mask):
@@ -1112,7 +1115,37 @@ class Simulation:
             decay = (5.0 * self.mu_sp * g * dt) / (2.0 * self.radii[self.in_play])
             self.angular[self.in_play, 2] = np.sign(w_z) * np.maximum(0.0, np.abs(w_z) - decay)
 
-    def run(self, framerate: float = None, frame_callback=None, verbose: bool = False):
+        return None if inplace else self.positions, self.velocities, self.angular, self.in_play
+
+    def map_to_first_coll(self, vx, vy, top, side, el):
+        start_state = {
+            "p": self.positions.copy(),
+            "v": self.velocities.copy(),
+            "a": self.angular.copy(),
+            "i": self.in_play.copy(),
+            "states": self.ball_states.copy(),
+            "versions": self.ball_versions.copy(),
+            "time": self.time
+        }
+        self.strike_cue_ball(vx, vy, top, side, el)
+        positions = [self.positions[0].copy()]
+        def callback(_):
+            positions.append(self.positions[0].copy())
+
+        self.run(framerate=30, frame_callback=callback, until_first_coll=True)
+        callback(self)
+        self.positions[:] = start_state["p"]
+        self.velocities[:] = start_state["v"]
+        self.angular[:] = start_state["a"]
+        self.in_play[:] = start_state["i"]
+        self.ball_states[:] = start_state["states"]
+        self.ball_versions[:] = start_state["versions"]
+        self.time = start_state["time"]
+        self.event_queue.clear()
+        return positions
+
+
+    def run(self, framerate: float = None, frame_callback=None, verbose: bool = False, until_first_coll=False):
         """
         Processes the event queue until all active balls have come to a complete stop.
         Call this directly after propelling the cue ball.
@@ -1207,28 +1240,29 @@ class Simulation:
                     self.evaluate_slide_roll(event)
                 case "ROLL_STOP":
                     self.evaluate_roll_stop(event)
+                    if until_first_coll:
+                        return self.shot_data
                 case "SPIN_STOP":
                     self.evaluate_spin_stop(event)
                 case "BALL_COLLISION":
                     self.evaluate_ball_collision(event)
+                    if until_first_coll:
+                        return self.shot_data
                 case "CUSHION_COLLISION":
                     self.evaluate_cushion_collision(event)
                 case "POT":
                     self.evaluate_pot(event)
+                    if until_first_coll:
+                        return self.shot_data
 
                 case _:
                     raise ValueError(f"Unknown event kind: {event.kind}")
 
             if self.is_break:
-                if "balls_past_centre" not in self.shot_data:
-                    self.shot_data["balls_past_centre"] = set()
-
                 for ind in range(1, self.n_obj_balls + 1):
                     if self.in_play[ind]:
-                        # Assuming baulk is -X, the center line is x=0.
-                        # A ball has passed the line if its whole volume is over it.
                         if self.positions[ind, 0] < -self.radii[ind]:
-                            self.shot_data["balls_past_centre"].add(ind)
+                            self.shot_data["balls_past_middle"].add(ind)
 
             if verbose:
                 if event.j is None or isinstance(event.j, tuple):

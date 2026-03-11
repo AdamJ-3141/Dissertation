@@ -1,2 +1,2 @@
-from match import Match
-from agent import Agent
+from .match import Match, TurnState
+from .agent import Agent, Human

@@ -4,21 +4,6 @@ import numpy as np
 from pool_simulation.constants import *
 import math
 
-COLOUR_MAP = {
-    0: (255, 255, 255),  # Cue ball
-    1: (200, 30, 30),  # Red Ball
-    2: (240, 240, 40),  # Yellow Ball
-    3: (20, 20, 20),  # Black Ball
-
-# --- Debug Colours ---
-    -1: (0, 255, 255),   # Cyan
-    -2: (255, 0, 255),   # Magenta
-    -3: (255, 128, 0),   # Orange
-    -4: (128, 0, 255),   # Neon Purple
-    -5: (0, 100, 255),   # Bright Blue
-    -6: (143, 255, 188)  # Light Green-Blue
-}
-
 WORLD_COLOURS = {
     "Cloth": (12, 196, 26),
     "Cushion": (5, 150, 16),
@@ -101,6 +86,9 @@ class Renderer:
                 COLOUR_MAP[0],
                 self.render_scale
             )
+
+        self.ghost_sprite = self.ball_sprites[0].copy()
+        self.ghost_sprite.fill((255, 255, 255, 128), special_flags=pygame.BLEND_RGBA_MULT)
 
     def world_to_screen(self, pos, screen_scale=1):
         """Convert world coordinates to pixel coordinates."""
@@ -368,6 +356,35 @@ class Renderer:
             new_v = (v * cos_t) + (cross_term * sin_t) + dot_term
             norms = np.linalg.norm(new_v, axis=1, keepdims=True)
             self.cue_ball_spots = new_v / norms
+
+    def draw_aim_line(self, aim_x: float, aim_y: float, speed, top, side, elevation):
+        full_aim = np.array(self.screen_to_world((aim_x, aim_y)), dtype=np.float64) - self.sim.positions[0]
+        if np.linalg.norm(full_aim) < 1e-5:
+            return
+        unit_aim = full_aim / np.linalg.norm(full_aim)
+        vel_vector = unit_aim * speed
+        positions = self.sim.map_to_first_coll(*vel_vector, top, side, elevation)
+        if positions[-1][0] > 100: # potted
+            positions = positions[:-1]
+        screen_positions = list(map(self.world_to_screen, positions))
+        screen_positions.insert(0, self.world_to_screen(self.sim.positions[0]))
+        if len(screen_positions) >= 2:
+            pygame.draw.lines(self.screen, (180, 180, 180), False, screen_positions, width=2)
+        ghost_pos = self.world_to_screen(positions[-1])
+        rect = self.ghost_sprite.get_rect(center=ghost_pos)
+        self.screen.blit(self.ghost_sprite, rect)
+
+    def draw_power_scale(self, speed: float):
+        ui_margin = 30
+        width = 10
+        full_height = 100
+        r_border = pygame.Rect(ui_margin, ui_margin, width, full_height)
+        max_fill_height = full_height - 4
+        current_fill_height = max_fill_height * (speed / MAX_SPEED)
+        start_y = (ui_margin + full_height - 2) - current_fill_height
+        r_inner = pygame.Rect(ui_margin + 2, start_y, width - 4, current_fill_height)
+        pygame.draw.rect(self.screen, (180, 180, 180), r_border, width=3)
+        pygame.draw.rect(self.screen, (180, 255, 180), r_inner, width=0)
 
     def render(self, fps=60, flip=True):
         """Draw the current frame."""
