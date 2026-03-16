@@ -12,15 +12,14 @@ def main():
     match = Match(sim, play_break=True)
 
     # Initialize the players
-    p1 = Human(renderer)
-    p2 = Human(renderer)
+    p1 = Human(sim, renderer)
+    p2 = Human(sim, renderer)
     players = {0: p1, 1: p2}
 
     # Main Game Loop
     while match.turn_state != TurnState.GAME_OVER:
         active_player = players[match.turn]
 
-        # 1. Set up the playback cache
         playback_frames = []
 
         def record_frame(simulation_instance):

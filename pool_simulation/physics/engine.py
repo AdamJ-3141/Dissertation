@@ -137,17 +137,18 @@ class Simulation:
     def reset(self, positions=None, colours=None, in_play=None):
         """Reset to given positions, or random if None."""
         if positions is None:
-            self.positions[:] = np.random.rand(self.n_obj_balls, 2) * [
+            self.positions[:] = np.random.rand(self.n_obj_balls+1, 2) * [
                 self.table_width, self.table_height
             ]
         else:
             self.positions[:] = positions
 
         if colours is None:
-            self.colours[:] = 0
+            self.colours[0] = 0
+            self.colours[1:] = 1
             cutoff = np.random.randint(0, self.n_obj_balls + 1)
-            self.colours[cutoff:self.n_obj_balls] = 1
-            self.colours[-1] = 2
+            self.colours[cutoff:self.n_obj_balls] = 2
+            self.colours[-1] = 3
         else:
             self.colours[:] = colours
 
@@ -267,11 +268,8 @@ class Simulation:
         self.colours.fill(0)  # Reset everything to cue ball color (0)
 
         if num_balls > 0:
-            # Create a standard WEPF set: 7 Reds (1), 7 Yellows (2), 1 Black (3)
             available_colors = [1] * 7 + [2] * 7
             np.random.shuffle(available_colors)
-
-            # Deal out exactly 'num_balls' colors into the active slots
             self.colours[1:num_balls] = available_colors[:num_balls - 1]
             self.colours[num_balls] = 3
 
@@ -399,6 +397,150 @@ class Simulation:
         self.predict_cushion_collision_events(mask)
         self.predict_pot_events(mask)
 
+    def validate_shot(self, velocity_x: float, velocity_y: float,
+                      topspin_offset: float = 0.0, sidespin_offset: float = 0.0,
+                      elevation_deg: float = 0.0):
+
+        # 1. Base directions
+        speed = np.hypot(velocity_x, velocity_y)
+        if speed < 1e-6:
+            return False
+
+        fx = velocity_x / speed
+        fy = velocity_y / speed
+
+        cue_dir_x = -fx
+        cue_dir_y = -fy
+
+        # Rightward vector from shooter's perspective
+        rx = fy
+        ry = -fx
+
+        r_c = self.radii[0]
+
+        # Calculate the lateral shift in meters based on sidespin (-1.0 to 1.0)
+        sidespin_shift = sidespin_offset * r_c
+
+        cue_x, cue_y = self.positions[0]
+
+        # ==========================================
+        # 2. THE SHIFTED RAY ORIGIN
+        # ==========================================
+        ray_x = cue_x + sidespin_shift * rx
+        ray_y = cue_y + sidespin_shift * ry
+
+        d = np.inf
+
+        # ==========================================
+        # 3a. Raycast against Line Segments
+        # ==========================================
+        for (p1, p2) in self.line_segments:
+            x1, y1 = p1
+            x2, y2 = p2
+
+            dx = x2 - x1
+            dy = y2 - y1
+
+            denominator = cue_dir_x * dy - cue_dir_y * dx
+            if np.abs(denominator) < 1e-8:
+                continue
+
+            px = ray_x - x1
+            py = ray_y - y1
+
+            # FIX: Flipped signs in the numerators for true distance
+            t = (py * dx - px * dy) / denominator
+            u = (py * cue_dir_x - px * cue_dir_y) / denominator
+
+            if 0 <= u <= 1:
+                if t > 0:
+                    if t < d: d = t
+                elif t > -r_c:
+                    d = 0.0
+
+        # ==========================================
+        # 3b. Raycast against Circular Cushion Knuckles
+        # ==========================================
+        # (This math was completely flawless!)
+        for (cx, cy, cr) in self.circles:
+            vx = ray_x - cx
+            vy = ray_y - cy
+
+            b = 2.0 * (cue_dir_x * vx + cue_dir_y * vy)
+            c = (vx * vx + vy * vy) - (cr * cr)
+
+            discriminant = b * b - 4.0 * c
+
+            if discriminant >= 0:
+                sqrt_disc = np.sqrt(discriminant)
+                t1 = (-b - sqrt_disc) / 2.0
+                t2 = (-b + sqrt_disc) / 2.0
+
+                if 1e-6 < t1 < d:
+                    d = t1
+                elif 1e-6 < t2 < d:
+                    d = t2
+
+        # ==========================================
+        # 4. Restriction from cushion
+        # ==========================================
+        theta = np.radians(elevation_deg)
+        min_tip_y = -1.0  # Default to no restriction
+
+        # FIX: Only apply the cushion restriction if it is physically reachable by the stick
+        if not np.isinf(d) and d < CUE_LENGTH:
+            y_blocked = r_c + (CUSHION_HEIGHT_ACTUAL - r_c) * np.cos(theta) - d * np.sin(theta)
+            safe_height = y_blocked + CUE_RADIUS  # Swapped to CUE_RADIUS to match the ball logic below
+
+            min_tip_y = (safe_height - r_c) / r_c
+
+            # Early exit if the cushion physically rejects the shot
+            if topspin_offset < min_tip_y:
+                # print(f"Shot Rejected: Cushion blocking cue. Min tip y: {min_tip_y:.3f},",
+                #        "Attempted: {topspin_offset:.3f}")
+                return False
+
+        # ==========================================
+        # 5. Restriction from balls
+        # ==========================================
+        # (Removed redundant vector recalculations)
+
+        for i in range(1, len(self.positions)):
+            if not self.in_play[i] or self.ball_states[i] == "POTTED":
+                continue
+
+            ox, oy = self.positions[i]
+            r_ob = self.radii[i]
+
+            vx = ox - cue_x
+            vy = oy - cue_y
+
+            d_ob = vx * cue_dir_x + vy * cue_dir_y
+
+            if 0 < d_ob < CUE_LENGTH:
+                w_signed = vx * rx + vy * ry
+                w_actual = np.abs(w_signed - sidespin_shift)
+                clearance_radius = r_ob + CUE_RADIUS
+
+                if w_actual < clearance_radius:
+                    h_barrier = r_ob + np.sqrt(clearance_radius ** 2 - w_actual ** 2)
+
+                    safe_height = (r_c + (h_barrier - r_c) * np.cos(theta) - d_ob * np.sin(theta))
+                    min_tip_y_ball = (safe_height - r_c) / r_c
+
+                    if min_tip_y_ball > min_tip_y:
+                        min_tip_y = min_tip_y_ball
+
+        # ==========================================
+        # Final Validation
+        # ==========================================
+        if topspin_offset < min_tip_y:
+            # print(f"Shot Rejected: Cue blocked by balls. Min tip y: {min_tip_y:.3f}, "
+            #       f"Attempted: {topspin_offset:.3f}")
+            return False
+
+        return True
+
     def propel_ball(self, ball_mask: npt.NDArray[np.bool_], velocities, angulars):
         self.velocities[ball_mask] = velocities
         self.angular[ball_mask] = angulars
@@ -413,35 +555,87 @@ class Simulation:
         sidespin_offset: Horizontal tip offset fraction [-1.0 (left english) to 1.0 (right english)].
         elevation_deg: Cue elevation angle in degrees.
         """
-        v = np.array([velocity_x, velocity_y], dtype=np.float64)
-        v_norm = np.linalg.norm(v)
 
-        if v_norm < 1e-8:
-            return
+        if not self.validate_shot(velocity_x, velocity_y, topspin_offset, sidespin_offset, elevation_deg):
+            return False
+
+        v_input = np.array([velocity_x, velocity_y], dtype=np.float64)
+        cue_speed = float(np.linalg.norm(v_input))
+
+        if cue_speed < 1e-8:
+            return False
+
+        elevation_rad = np.radians(elevation_deg)
 
         # 1. Base travel vectors
-        v_dir = v / v_norm
+        v_dir = v_input / cue_speed
         v_perp = np.array([-v_dir[1], v_dir[0]])  # Perpendicular points "Left" of the shot line
+
+        forward_speed = cue_speed * np.cos(elevation_rad)
+        v = v_dir * forward_speed
+
+        # Miscue check
+        spin_radius = np.hypot(sidespin_offset, topspin_offset)
+        miscue_limit = 0.75  # The physical edge before the tip slips
+
+        if spin_radius > miscue_limit:
+
+            # 1. Forward velocity is severely killed (e.g., only 10% transfers)
+            weak_forward = v_dir * (cue_speed * 0.1)
+
+            # 2. Tangent Squirt: The ball squirts away from the tip.
+            # If sidespin_offset is positive (Right spin), it squirts Left (v_perp).
+            # The severity of the squirt scales with how hard you hit it.
+            squirt_velocity = v_perp * (sidespin_offset * cue_speed * 0.25)
+
+            miscue_v = weak_forward + squirt_velocity
+
+            # 3. Extreme Grazing Spin: The slipping tip violently brushes the ball
+            R = float(self.radii[0])
+            base_spin_magnitude = (2.5 * float(cue_speed)) / R
+
+            # Amplify the spin by 1.5x to simulate the grazing kinetic friction transfer
+            w_perp = topspin_offset * base_spin_magnitude * 0.05
+            w_z_raw = sidespin_offset * base_spin_magnitude * 0.05
+
+            elevation_rad = np.radians(elevation_deg)
+            w_z = w_z_raw * np.cos(elevation_rad)
+            w_dir = w_z_raw * np.sin(elevation_rad)
+
+            w_world_x = (w_dir * v_dir[0]) + (w_perp * v_perp[0])
+            w_world_y = (w_dir * v_dir[1]) + (w_perp * v_perp[1])
+            miscue_w = np.array([w_world_x, w_world_y, w_z])
+
+            # Fire the miscue shot!
+            active_mask = np.zeros(self.n_obj_balls + 1, dtype=bool)
+            active_mask[0] = True
+
+            self.propel_ball(
+                ball_mask=active_mask,
+                velocities=np.array([miscue_v]),
+                angulars=np.array([miscue_w])
+            )
+            return True
 
         # ==========================================
         # 2. PROPER CUE STRIKING PHYSICS
         # ==========================================
-        # Calculate the base spin magnitude relative to the shot speed
-        # Formula: w = (5/2) * offset * (v / R)
         R = float(self.radii[0])
-        base_spin_magnitude = (2.5 * float(v_norm)) / R
+
+        # THE FIX: The Slate Pinch Multiplier
+        # Striking downwards compresses the ball into the slate. The massive
+        # reaction force allows the tip to impart significantly more spin!
+        pinch_factor = 1.0 + (np.sin(elevation_rad) ** 2) * 4.5
+
+        # Calculate base spin relative to the CUE speed AND the slate pinch
+        base_spin_magnitude = (2.5 * cue_speed * pinch_factor) / R
 
         # Scale the input tip offsets by this physical magnitude
         w_perp = topspin_offset * base_spin_magnitude
         w_z_raw = sidespin_offset * base_spin_magnitude
 
         # 3. Apply Cue Elevation (Swerve/Massé factor)
-        elevation_rad = np.radians(elevation_deg)
-
-        # Spin along the vertical Z-axis (Standard Sidespin)
         w_z = w_z_raw * np.cos(elevation_rad)
-
-        # Spin along the direction of travel (The Massé / Swerve factor!)
         w_dir = w_z_raw * np.sin(elevation_rad)
 
         # 4. Convert local spin to global world coordinates
@@ -459,6 +653,7 @@ class Simulation:
             velocities=np.array([v]),
             angulars=np.array([angular_velocity])
         )
+        return True
 
     def predict_slide_roll_events(self, ball_mask: npt.NDArray[np.bool_]):
         sliding_mask = self.ball_states == "SLIDING"  # Sliding mask should eliminate any stopped balls
@@ -780,6 +975,8 @@ class Simulation:
             A = self._get_acceleration(i)
             R = self.radii[i]
 
+            R_eff = np.sqrt(R ** 2 - (CUSHION_HEIGHT_EFF - R) ** 2)
+
             valid_times = []
 
             # 1. Check Line Segments (No distance filter!)
@@ -797,7 +994,7 @@ class Simulation:
                 v_n = np.dot(V0, n_hat)
                 p_n = np.dot(P0 - P1, n_hat)
 
-                for offset in [R, -R]:
+                for offset in [R_eff, -R_eff]:
                     coeffs = np.array([0.5 * a_n, v_n, p_n - offset])
                     coeffs[np.abs(coeffs) < 1e-12] = 0.0
 
@@ -814,7 +1011,7 @@ class Simulation:
             for idx, (cx, cy, cr) in enumerate(self.circles):
                 Pc = np.array([cx, cy])
                 dp = P0 - Pc
-                R_sum = R + cr
+                R_sum = R_eff + cr
 
                 A_c = 0.25 * np.dot(A, A)
                 B_c = np.dot(A, V0)
@@ -925,6 +1122,19 @@ class Simulation:
         # ==========================================
         eta_squared = (self.beta_t / self.beta_n) / (1.7 ** 2)
 
+        # Default to the standard, bouncy cushion restitution
+        active_restitution = self.e_c
+
+        # The indices of all 12 angled pocket jaws
+        jaw_indices = [1, 2, 4, 5, 7, 8, 10, 11, 13, 14, 16, 17]
+
+        # If the ball hits an angled jaw, drop its bounce significantly!
+        if target_type == 'line' and target_idx in jaw_indices:
+            active_restitution = self.e_c * 0.4  # 0.4 = 60% less bouncy. Tweak this!
+
+        elif target_type == 'circle':
+            active_restitution = self.e_c * 0.95
+
         v_t_f, v_n_f = resolve_collinear_compliant_frictional_inelastic_collision(
             v_t_0=v_t_0,
             v_n_0=v_n_0,
@@ -932,7 +1142,7 @@ class Simulation:
             beta_t=self.beta_t,
             beta_n=self.beta_n,
             mu=self.mu_c,
-            e_n=self.e_c,
+            e_n=active_restitution,
             k_n=self.k_n,
             eta_squared=eta_squared
         )
@@ -1132,7 +1342,7 @@ class Simulation:
         def callback(_):
             positions.append(self.positions[0].copy())
 
-        self.run(framerate=30, frame_callback=callback, until_first_coll=True)
+        self.run(framerate=60, frame_callback=callback, until_first_coll=True)
         callback(self)
         self.positions[:] = start_state["p"]
         self.velocities[:] = start_state["v"]
@@ -1298,8 +1508,9 @@ class Simulation:
 
         self.shot_data["sim_time"] = time.perf_counter() - start_time
         for ind, p in enumerate(self.positions):
-            if (abs(p[0]) > TABLE_WIDTH/2 + CUSHION_WIDTH - self.radii[ind]
-                    or abs(p[1]) > TABLE_HEIGHT/2 + CUSHION_WIDTH - self.radii[ind]) and self.in_play[ind]:
+            R_eff = np.sqrt(self.radii[ind] ** 2 - (CUSHION_HEIGHT_EFF - self.radii[ind]) ** 2)
+            if (abs(p[0]) > TABLE_WIDTH/2 + CUSHION_WIDTH - R_eff
+                    or abs(p[1]) > TABLE_HEIGHT/2 + CUSHION_WIDTH - R_eff) and self.in_play[ind]:
                 self.shot_data["error"] = True
                 self.shot_data["error_balls"].append(ind)
 

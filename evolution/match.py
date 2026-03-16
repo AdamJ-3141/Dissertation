@@ -1,19 +1,19 @@
 from pool_simulation.constants import *
 from pool_simulation.physics import Simulation
-from enum import Enum
+from enum import IntEnum
 from .agent import Agent
 import numpy as np
 
 
-class TurnState(Enum):
+class TurnState(IntEnum):
     NORMAL = 0
-    BALL_IN_HAND = 2
-    BALL_IN_HAND_BAULK = 3
-    GAME_OVER = 4
+    BALL_IN_HAND = 1
+    BALL_IN_HAND_BAULK = 2
+    GAME_OVER = 3
 
 
 class Match:
-    def __init__(self, engine: Simulation, play_break=False):
+    def __init__(self, engine: Simulation, play_break=False, custom_setup = True):
         self.engine = engine
         self.turn = 0
         self.open_table = True
@@ -26,7 +26,7 @@ class Match:
         if play_break:
             self.engine.reset_to_break()
             self.turn_state = TurnState.BALL_IN_HAND_BAULK
-        else:
+        elif not custom_setup:
             self.engine.set_up_randomly(engine.n_obj_balls)
 
     def was_on_black(self, turn, potted_this_shot=None):
@@ -63,26 +63,32 @@ class Match:
                 pos = agent.get_cue_ball_in_hand_position(
                     self.engine.colours,
                     self.engine.in_play,
-                    self.engine.positions
+                    self.engine.positions,
+                    self.player_colours[self.turn],
+                    self.turn_state
                 )
                 try:
                     self.engine.move_cue_ball(pos, baulk=(self.turn_state == TurnState.BALL_IN_HAND_BAULK))
                     valid_placement = True
                 except ValueError:
-                    pass
+                    self.turn_state = TurnState.BALL_IN_HAND
+                    self.turn = 1 - self.turn
+                    return None
 
             self.turn_state = TurnState.NORMAL
-
         # 2. Get and execute shot
         vel_x, vel_y, tip_y, tip_x, cue_elev = agent.get_shot_parameters(
             self.engine.colours,
             self.engine.in_play,
-            self.engine.positions
+            self.engine.positions,
+            self.player_colours[self.turn],
+            self.turn_state
         )
 
-        self.engine.strike_cue_ball(vel_x, vel_y, tip_y, tip_x, cue_elev)
+        valid = self.engine.strike_cue_ball(vel_x, vel_y, tip_y, tip_x, cue_elev)
         shot_data = self.engine.run(framerate=FPS, frame_callback=frame_callback)
-
+        print(shot_data)
+        shot_data["valid"] = valid
         # 3. Referee evaluates the result
         self.evaluate_shot(shot_data)
         return None
@@ -137,12 +143,12 @@ class Match:
         self.engine.ball_versions[ball_idx] += 1
 
     def evaluate_shot(self, shot_data: dict):
-        print(shot_data)
         first_hit = shot_data.get("first_ball_hit")
         potted = shot_data.get("balls_potted", [])
         cushion = shot_data.get("cushion_after_ball", False)
         error_balls = shot_data.get("error_balls", [])  # List of ball indices that left the table
         balls_past_middle = shot_data.get("balls_past_middle", set())  # Set of balls that crossed the line
+        valid = shot_data.get("valid", True)
 
         # ==========================================
         # 1. HANDLE BALLS OFF THE TABLE (Rules 6l & 6m)
@@ -165,7 +171,7 @@ class Match:
             # Rule 4f: The 3-Point Rule
             break_points = len(obj_potted) + len(balls_past_middle)
 
-            if break_points < 3:
+            if break_points < 3 or not valid:
                 print("Failure to perform legal break. Re-rack required.")
                 self.turn = 1 - self.turn
                 # In a real game, opponent chooses to break or pass back. Here we just switch turns and re-rack.
@@ -228,7 +234,7 @@ class Match:
                     is_foul = True
                     print("Foul (Did not hit expected colour). Ball in hand.")
 
-        if len(potted) == 0 and not cushion:
+        if (len(potted) == 0 and not cushion) or not valid:
             is_foul = True
 
         # ==========================================
