@@ -4,85 +4,24 @@ from pool_simulation.constants import *
 
 
 class Agent:
-    def __init__(self, sim, net=None):
-        self.net = net
+    def __init__(self, sim):
         self.sim = sim
-
-    @staticmethod
-    def _get_nn_state(colours: np.ndarray, in_play: np.ndarray, positions: np.ndarray,
-                      target_color: int, turn_state: int) -> np.ndarray:
-        """Helper method to format the table state for the neural network."""
-
-        # 1. Cue Ball Absolute Position (Anchors the AI so it knows where the cushions are)
-        cb_abs_x = np.array([positions[0, 0] / (TABLE_WIDTH / 2.0)])
-        cb_abs_y = np.array([positions[0, 1] / (TABLE_HEIGHT / 2.0)])
-
-        # 2. Egocentric Radar: Calculate EVERY ball's relative distance to the cue ball
-        rel_x = (positions[:, 0] - positions[0, 0]) / TABLE_WIDTH
-        rel_y = (positions[:, 1] - positions[0, 1]) / TABLE_HEIGHT
-
-        # 3. Handle off-table balls
-        safe_rel_x = np.where(in_play, rel_x, 2.0)
-        safe_rel_y = np.where(in_play, rel_y, 2.0)
-
-        # 4. Target Identifiers
-        targets = np.zeros_like(colours, dtype=np.float32)
-        for i in range(1, len(colours)):
-            if colours[i] == 3:
-                targets[i] = 0.5
-            elif target_color is None or colours[i] == target_color:
-                targets[i] = 1.0
-            else:
-                targets[i] = -1.0
-
-        targets = np.where(in_play, targets, 0.0)
-        in_play_float = np.astype(in_play, np.float32)
-
-        turn_state_one_hot = np.zeros(4, dtype=np.float32)
-        turn_state_one_hot[turn_state] = 1.0
-
-        # Combine them all (Size: 1 + 1 + 16 + 16 + 16 + 16 + 4 = 70)
-        return np.concatenate([cb_abs_x, cb_abs_y, safe_rel_x, safe_rel_y, targets, in_play_float, turn_state_one_hot])
 
     def get_shot_parameters(self, colours: np.ndarray, in_play: np.ndarray, positions: np.ndarray,
                             target_color: int, turn_state: int) -> tuple:
-        if self.net is None:
-            return (np.random.uniform(-5.0, 5.0), np.random.uniform(-5.0, 5.0),
-                    np.random.uniform(-1.0, 1.0), np.random.uniform(-1.0, 1.0), np.random.uniform(0.0, 89.0))
-
-        state = self._get_nn_state(colours, in_play, positions, target_color, turn_state)
-        outputs = self.net.activate(state)
-
-        vx = outputs[0] * 7.0
-        vy = outputs[1] * 7.0
-        topspin = outputs[2]
-        # sidespin = outputs[3]
-        # elevation = ((outputs[4] + 1.0) / 2.0) * 89.0
-
-        # --- MOTOR SKILL LOCK: Force flat, center-ball hits for Phase 1 ---
-        sidespin = 0.0
-        min_el = 89.0  # Fallback to maximum elevation
-        if np.linalg.norm([vx, vy]) > 1e-4:
-            # Ask the engine to find the lowest valid angle for this exact shot
-            for test_e in range(0, 90):
-                if self.sim.validate_shot(vx, vy, topspin, sidespin, float(test_e)):
-                    min_el = float(test_e)
-                    break
-        elevation = min_el
+        vx = None
+        vy = None
+        topspin = None
+        sidespin = None
+        elevation = None
 
         return vx, vy, topspin, sidespin, elevation
 
     def get_cue_ball_in_hand_position(self, colours: np.ndarray, in_play: np.ndarray, positions: np.ndarray,
                                       target_color: int, turn_state: int) -> np.ndarray:
-        if self.net is None:
-            return np.array([-TABLE_WIDTH / 4.0, 0.0])
 
-        state = self._get_nn_state(colours, in_play, positions, target_color, turn_state)
-        outputs = self.net.activate(state)
-
-        # Use outputs 5 and 6 for the placement, scaling them to the table dimensions
-        place_x = outputs[5] * (TABLE_WIDTH / 2.0)
-        place_y = outputs[6] * (TABLE_HEIGHT / 2.0)
+        place_x = 0.0
+        place_y = 0.0
 
         return np.array([place_x, place_y])
 
