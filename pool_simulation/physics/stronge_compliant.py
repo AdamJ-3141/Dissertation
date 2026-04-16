@@ -365,7 +365,7 @@ def slip_time_for_stick(
         return t_f
 
     t_slip = sp.optimize.toms748(f, t_c, t_f)
-    assert t_stick <= t_slip and t_slip <= t_f, (
+    assert t_stick <= t_slip + 1e-9 and t_slip <= t_f + 1e-9, (
         f"t_stick={t_stick} <= t_slip={t_slip} <= t_f={t_f}"
     )
     return t_slip

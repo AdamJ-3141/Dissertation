@@ -1,120 +1,115 @@
-import pygame
-import pickle
-import neat
+import json
+import time
+import sys
 import os
 import numpy as np
+import pygame
+import warnings
+warnings.filterwarnings("ignore", message=".*avx2 capable.*")
 
-from pool_simulation.physics.engine import Simulation
+from pool_simulation.physics import Simulation
 from pool_simulation.render import Renderer
-from evolution import Human, Match, TurnState
-from agent import Agent  # Import your new Agent class!
 
 
-def main():
-    # ==========================================
-    # 1. LOAD THE AI BRAIN
-    # ==========================================
-    local_dir = os.path.dirname(__file__)
-    config_path = os.path.join(local_dir, 'config-feedforward')
-
-    # Load the exact NEAT configuration used for training
-    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
-                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
-                         config_path)
-
-    # Load the saved champion genome
-    with open('best_pool_bot.pkl', 'rb') as f:
-        winner_genome = pickle.load(f)
-
-    # Rebuild the neural network and give it to the Agent
-    net = neat.nn.FeedForwardNetwork.create(winner_genome, config)
-
-    # ==========================================
-    # 2. SETUP THE MATCH
-    # ==========================================
-    # Start the simulation (we will override the 15 balls in a second)
-    sim = Simulation(n_obj_balls=15, start_break=False)
+def watch_telemetry():
+    sim = Simulation(start_break=False)
     renderer = Renderer(sim)
+    last_mod_time = 0
 
-    # Recreate the exact 1-ball drill the AI mastered
-    rx = np.random.uniform(-sim.table_width / 2.0 + 0.1, sim.table_width / 2.0 - 0.1)
-    ry = np.random.uniform(-sim.table_height / 2.0 + 0.1, sim.table_height / 2.0 - 0.1)
-    positions = [rx, ry]
-    target_color = 1
-    sim.colours[1] = target_color
+    print("Waiting for the training script to broadcast its first shot...")
 
-    # Place 3 easy target balls
-    sim.positions[1] = positions
-    sim.in_play.fill(False)
-    sim.in_play[:2] = True
+    def render_frame(current_sim):
+        """Callback passed to sim.run() to draw each frame."""
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                pygame.quit()
+                sys.exit()
 
-    match = Match(sim, play_break=False, custom_setup=True)
+        # The renderer's clock.tick(fps) handles the real-time playback speed
+        renderer.render(fps=60)
 
-    # Force the AI to be Player 1 so we immediately see its shot
-    match.player_colours[0] = 1
-    ai_player = Agent(sim, net)
-    # p1 is the AI, p2 is Human (or you can make them both AI!)
-    p1 = ai_player
-    p2 = Human(sim, renderer)
-    players = {0: p1, 1: p2}
+    while True:
+        # 1. Wait for a new file update
+        if not os.path.exists("live_shot.json"):
+            time.sleep(1.0)
+            continue
 
-    # ==========================================
-    # 3. MAIN GAME LOOP
-    # ==========================================
-    while match.turn_state != TurnState.GAME_OVER:
-        active_player = players[match.turn]
+        current_mod_time = os.path.getmtime("live_shot.json")
+        if current_mod_time == last_mod_time:
+            time.sleep(0.1)
+            continue
 
-        playback_frames = []
+        # 2. Safely read the JSON
+        try:
+            with open("live_shot.json", "r") as f:
+                shot = json.load(f)
 
-        def record_frame(simulation_instance):
-            playback_frames.append({
-                'positions': simulation_instance.positions.copy(),
-                'angular': simulation_instance.angular.copy(),
-                'in_play': simulation_instance.in_play.copy(),
-                'ball_states': simulation_instance.ball_states.copy()
-            })
+            last_mod_time = current_mod_time
 
-        print(f"Player {match.turn + 1}'s turn. Waiting for shot...")
+        except (json.JSONDecodeError, PermissionError, ValueError):
+            # The file is currently half-written. Wait a tiny bit and try again.
+            time.sleep(0.05)
+            continue
 
-        # Ask the referee to take a turn.
-        match.play_turn(active_player, frame_callback=record_frame)
+        # 3. Setup the physical table (with bulletproof explicit datatypes)
+        sim.reset()
+        sim.positions = np.array(shot["positions"], dtype=np.float64)
+        sim.in_play = np.array(shot["in_play"], dtype=bool)
+        sim.colours = np.array(shot["colours"], dtype=int)
 
-        final_referee_state = {
-            'positions': sim.positions.copy(),
-            'angular': sim.angular.copy(),
-            'in_play': sim.in_play.copy(),
-            'ball_states': sim.ball_states.copy()
-        }
+        # 4. Decode the action
+        raw_action = shot["action"]
+        vx, vy = raw_action[0] * 7.0, raw_action[1] * 7.0
+        theta = raw_action[2] * np.pi
+        r = (raw_action[3] + 1) / 2 * 0.75
 
-        # Playback the physical simulation that just occurred
-        for frame in playback_frames:
-            sim.positions = frame['positions']
-            sim.angular = frame['angular']
-            sim.in_play = frame['in_play']
-            sim.ball_states = frame['ball_states']
+        topspin = r * np.sin(theta)
+        sidespin = r * np.cos(theta)
+        elevation = ((raw_action[4] + 1.0) / 2.0) * 60
 
-            renderer.render(fps=60, flip=True)
+        # --- Calculate Aim Line Parameters ---
+        speed = float(np.hypot(vx, vy))
+
+        # Find a target point along the velocity vector and convert to screen pixels
+        if speed > 1e-5:
+            target_world_x = sim.positions[0][0] + vx
+            target_world_y = sim.positions[0][1] + vy
+            aim_screen_x, aim_screen_y = renderer.world_to_screen((target_world_x, target_world_y))
+        else:
+            aim_screen_x, aim_screen_y = renderer.world_to_screen(sim.positions[0])
+
+        # --- Hold the initial frame for 2 seconds and draw the UI ---
+        pause_start = time.time()
+        while time.time() - pause_start < 2.0:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+            # 1. Draw the base table and balls WITHOUT flipping the display yet
+            renderer.render(fps=60, flip=False)
+
+            # 2. Draw the Ghost Ball and Aim Line
+            if speed > 1e-5:
+                renderer.draw_aim_line(aim_screen_x, aim_screen_y, speed, topspin, sidespin, elevation)
+
+            # 3. Draw the custom HUD elements
+            renderer.draw_power_scale(speed)
+
+            # raw_action[3] is side (-1 to 1), raw_action[2] is top (-1 to 1)
+            renderer.draw_spin_ui(tip_x=sidespin, tip_y=topspin)
+            renderer.draw_elevation_ui(elevation)
+
+            # 4. Flip the fully composed frame to the monitor
+            pygame.display.flip()
             renderer.clock.tick(60)
 
-            for evt in pygame.event.get():
-                if evt.type == pygame.QUIT:
-                    pygame.quit()
-                    exit()
+        # 5. Strike the ball
+        sim.strike_cue_ball(vx, vy, topspin, sidespin, elevation)
 
-        sim.positions = final_referee_state['positions']
-        sim.angular = final_referee_state['angular']
-        sim.in_play = final_referee_state['in_play']
-        sim.ball_states = final_referee_state['ball_states']
-
-        print("Shot complete. Referee evaluating...")
-
-        # Stop the game after the AI takes its one perfect shot so we can analyze it
-        if match.turn == 0:
-            print("AI shot complete. Exiting for analysis.")
-            break
-
-    pygame.quit()
+        # 6. Let the engine handle the rest!
+        sim.run(framerate=60.0, frame_callback=render_frame)
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    watch_telemetry()
