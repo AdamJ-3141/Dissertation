@@ -9,7 +9,6 @@ from pool_simulation.physics.engine import Simulation
 def run_performance_benchmark():
     sim = Simulation(n_obj_balls=15)
 
-    # --- Experiment Parameters ---
     ball_counts = [1, 3, 5, 7, 9, 11, 13, 15]
     velocities = [2.0, 4.0, 6.0, 8.0, 10.0]  # m/s
     trials_per_setup = 50  # Average across 5 random layouts for stability
@@ -48,7 +47,6 @@ def run_performance_benchmark():
                 "Compute Time (ms)": avg_time
             })
 
-    # --- Visualization ---
     df = pd.DataFrame(results)
 
     # Pivot the data so Balls are rows and Velocities are columns

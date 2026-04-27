@@ -1,7 +1,8 @@
 import pygame
 from pool_simulation.physics.engine import Simulation
 from pool_simulation.render import Renderer
-from evolution import Human, Match, TurnState
+from planner import Human
+from match import Match,TurnState
 
 
 def main():

@@ -15,6 +15,8 @@ class Simulation:
                  mu_s=MU_S, mu_r=MU_R, mu_sp = MU_SP, mu_b = MU_B, e_c = E_C,
                  mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T, start_break=False):
 
+        self._saved_in_play = None
+        self._saved_positions = None
         self.n_obj_balls = n_obj_balls
         self.table_width = TABLE_WIDTH
         self.table_height = TABLE_HEIGHT
@@ -95,7 +97,9 @@ class Simulation:
             "sim_time": 0.0,
             "error": False,
             "error_balls": [],
-            "balls_past_middle": set()
+            "balls_past_middle": set(),
+            "event_history": [],
+            "trace": []
         }
         self.is_break = start_break
 
@@ -274,8 +278,9 @@ class Simulation:
             self.colours[num_balls] = 3
 
         # Place Cue Ball randomly
-        self.positions[0] = (np.array([TABLE_WIDTH, TABLE_HEIGHT]) *
-                             np.random.random((1,2)) - np.array([TABLE_WIDTH / 2, TABLE_HEIGHT / 2]))
+        self.positions[0] = (np.array([(TABLE_WIDTH - CUE_BALL_RADIUS), (TABLE_HEIGHT - CUE_BALL_RADIUS)]) *
+                             np.random.random((1,2)) - np.array([(TABLE_WIDTH - CUE_BALL_RADIUS) / 2,
+                                                                 (TABLE_HEIGHT - CUE_BALL_RADIUS) / 2]))
         self.in_play[0] = True
 
         # Table bounds
@@ -367,6 +372,20 @@ class Simulation:
             return event
 
         return None
+
+    def save_state(self):
+        """Captures the current positions and in-play status of all balls."""
+        self._saved_positions = np.copy(self.positions)
+        self._saved_in_play = np.copy(self.in_play)
+
+    def load_state(self):
+        """Restores the simulation to the previously captured state."""
+        if hasattr(self, '_saved_positions'):
+            # Reset ball data to the saved snapshot
+            self.positions = np.copy(self._saved_positions)
+            self.in_play = np.copy(self._saved_in_play)
+            # Ensure velocity is zeroed out to prevent balls from moving instantly
+            self.velocities = np.zeros_like(self.positions)
 
     def move_cue_ball(self, p: npt.NDArray[np.float64], baulk=False):
         other_balls_mask = self.in_play.copy()
@@ -546,6 +565,7 @@ class Simulation:
         self.angular[ball_mask] = angulars
         self.ball_states[ball_mask] = "SLIDING"
         self.ball_versions[ball_mask] += 1
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
 
     def strike_cue_ball(self, velocity_x: float, velocity_y: float,
                         topspin_offset: float = 0.0, sidespin_offset: float = 0.0,
@@ -567,34 +587,26 @@ class Simulation:
 
         elevation_rad = np.radians(elevation_deg)
 
-        # 1. Base travel vectors
         v_dir = v_input / cue_speed
-        v_perp = np.array([-v_dir[1], v_dir[0]])  # Perpendicular points "Left" of the shot line
+        v_perp = np.array([-v_dir[1], v_dir[0]])
 
         forward_speed = cue_speed * np.cos(elevation_rad)
         v = v_dir * forward_speed
 
         # Miscue check
         spin_radius = np.hypot(sidespin_offset, topspin_offset)
-        miscue_limit = 0.75  # The physical edge before the tip slips
+        miscue_limit = 0.75
 
         if spin_radius > miscue_limit:
 
-            # 1. Forward velocity is severely killed (e.g., only 10% transfers)
             weak_forward = v_dir * (cue_speed * 0.1)
-
-            # 2. Tangent Squirt: The ball squirts away from the tip.
-            # If sidespin_offset is positive (Right spin), it squirts Left (v_perp).
-            # The severity of the squirt scales with how hard you hit it.
             squirt_velocity = v_perp * (sidespin_offset * cue_speed * 0.25)
 
             miscue_v = weak_forward + squirt_velocity
 
-            # 3. Extreme Grazing Spin: The slipping tip violently brushes the ball
             R = float(self.radii[0])
             base_spin_magnitude = (2.5 * float(cue_speed)) / R
 
-            # Amplify the spin by 1.5x to simulate the grazing kinetic friction transfer
             w_perp = topspin_offset * base_spin_magnitude * 0.05
             w_z_raw = sidespin_offset * base_spin_magnitude * 0.05
 
@@ -606,7 +618,6 @@ class Simulation:
             w_world_y = (w_dir * v_dir[1]) + (w_perp * v_perp[1])
             miscue_w = np.array([w_world_x, w_world_y, w_z])
 
-            # Fire the miscue shot!
             active_mask = np.zeros(self.n_obj_balls + 1, dtype=bool)
             active_mask[0] = True
 
@@ -617,34 +628,21 @@ class Simulation:
             )
             return True
 
-        # ==========================================
-        # 2. PROPER CUE STRIKING PHYSICS
-        # ==========================================
         R = float(self.radii[0])
-
-        # THE FIX: The Slate Pinch Multiplier
-        # Striking downwards compresses the ball into the slate. The massive
-        # reaction force allows the tip to impart significantly more spin!
         pinch_factor = 1.0 + (np.sin(elevation_rad) ** 2) * 4.5
-
-        # Calculate base spin relative to the CUE speed AND the slate pinch
         base_spin_magnitude = (2.5 * cue_speed * pinch_factor) / R
 
-        # Scale the input tip offsets by this physical magnitude
         w_perp = topspin_offset * base_spin_magnitude
         w_z_raw = sidespin_offset * base_spin_magnitude
 
-        # 3. Apply Cue Elevation (Swerve/Massé factor)
         w_z = w_z_raw * np.cos(elevation_rad)
         w_dir = w_z_raw * np.sin(elevation_rad)
 
-        # 4. Convert local spin to global world coordinates
         w_world_x = (w_dir * v_dir[0]) + (w_perp * v_perp[0])
         w_world_y = (w_dir * v_dir[1]) + (w_perp * v_perp[1])
 
         angular_velocity = np.array([w_world_x, w_world_y, w_z])
 
-        # 5. Fire the shot!
         active_mask = np.zeros(self.n_obj_balls + 1, dtype=bool)
         active_mask[0] = True
 
@@ -679,6 +677,7 @@ class Simulation:
         self.ball_versions[i] += 1
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
         self.predict_roll_stop_events(mask)
         self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
@@ -709,6 +708,7 @@ class Simulation:
         self.ball_versions[i] += 1
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
         self.predict_ball_collision_events(mask)
         self.predict_spin_stop_events(mask)
         self.predict_cushion_collision_events(mask)
@@ -740,6 +740,7 @@ class Simulation:
         i = event.i
         # Clamp the spin strictly to 0.0 to prevent floating point drift
         self.angular[i, 2] = 0.0
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
 
     def _get_acceleration(self, i):
         state = self.ball_states[i]
@@ -921,6 +922,8 @@ class Simulation:
         # Any collision violently alters trajectory, ensuring they enter a sliding phase
         self.ball_states[i] = "SLIDING"
         self.ball_states[j] = "SLIDING"
+        self.shot_data["event_history"].append(("ball", i, j))
+
 
         # ==========================================
         # POSITIONAL CORRECTION
@@ -958,7 +961,7 @@ class Simulation:
                 self.shot_data["first_ball_hit"] = j
             else:
                 self.shot_data["first_ball_hit"] = i
-
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
         self.predict_slide_roll_events(mask)
         self.predict_spin_stop_events(mask)
         self.predict_ball_collision_events(mask)
@@ -1130,7 +1133,7 @@ class Simulation:
 
         # If the ball hits an angled jaw, drop its bounce significantly!
         if target_type == 'line' and target_idx in jaw_indices:
-            active_restitution = self.e_c * 0.4  # 0.4 = 60% less bouncy. Tweak this!
+            active_restitution = self.e_c * 0.6
 
         elif target_type == 'circle':
             active_restitution = self.e_c * 0.95
@@ -1169,6 +1172,8 @@ class Simulation:
         self.ball_states[i] = "SLIDING"
         self.ball_versions[i] += 1
 
+        self.shot_data["event_history"].append(("cushion", i, target_type, target_idx))
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
         # Predict the new future for this ball
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
@@ -1270,6 +1275,9 @@ class Simulation:
 
         self.ball_versions[i] += 1
         self.shot_data["balls_potted"].append(i)
+
+        self.shot_data["event_history"].append(("pot", i, event.j[1]))
+        self.shot_data["trace"].append((self.positions.copy(), self.velocities.copy(), self.angular.copy(), self.in_play.copy()))
 
     def advance_physics_state(self, dt, inplace=True):
         if dt <= 0.0:
@@ -1378,7 +1386,9 @@ class Simulation:
             "sim_time": 0.0,
             "error": False,
             "error_balls": [],
-            "balls_past_middle": set()
+            "balls_past_middle": set(),
+            "event_history": [],
+            "trace": []
         }
 
         if framerate and frame_callback:

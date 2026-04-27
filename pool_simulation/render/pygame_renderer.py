@@ -48,6 +48,21 @@ def make_ball_sprite(float_radius, colour, render_scale):
     return small_surf
 
 
+def _value_to_color(val_norm):
+    if val_norm <= 0.05:
+        return (0, 0, 0, 0)
+    if val_norm < 0.5:
+        f = (val_norm - 0.05) / 0.45
+        g = int(255 - (127 * f))
+        a = int(60 + (80 * f))
+        return (255, g, 0, a)
+    else:
+        f = (val_norm - 0.5) / 0.5
+        g = int(128 - (128 * f))
+        a = int(140 + (115 * f))
+        return (255, g, 0, a)
+
+
 class Renderer:
 
     def __init__(self, sim, scale=PIXELS_PER_METER):
@@ -57,7 +72,6 @@ class Renderer:
         self.render_scale = 8
         self.width = int(sim.table_width * 2 * scale)
         self.height = int(sim.table_height * 2 * scale)
-
         pygame.init()
         self.screen = pygame.display.set_mode((self.width, self.height))
         self.table = self.draw_table()
@@ -464,12 +478,132 @@ class Renderer:
         cue_outline = [t0_a, t1_a, t2_a, t3_a, t3_b, t2_b, t1_b, t0_b]
         pygame.draw.polygon(self.screen, (30, 30, 30), cue_outline, 1)
 
-    def render(self, fps=60, flip=True):
+    def draw_heatmap_overlay(self, evaluator):
+        import math
+        nx, ny = 120, 60
+        heatmap, playable_w, playable_h, _ = evaluator.get_full_heatmap(nx=nx, ny=ny)
+        overlay = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+
+        cell_w_world = (2 * playable_w) / (nx - 1) if nx > 1 else 0
+        cell_h_world = (2 * playable_h) / (ny - 1) if ny > 1 else 0
+
+        cell_w_px = max(1, math.ceil(cell_w_world * self.scale))
+        cell_h_px = max(1, math.ceil(cell_h_world * self.scale))
+
+        x_vals = np.linspace(-playable_w, playable_w, nx)
+        y_vals = np.linspace(-playable_h, playable_h, ny)
+
+        max_val = np.max(heatmap)
+        if max_val <= 0: return
+
+        for i in range(ny):
+            for j in range(nx):
+                val = heatmap[i, j]
+                if val <= 0: continue
+
+                val_norm = val / max_val
+                color = _value_to_color(val_norm)
+
+                if color[3] > 0:
+                    world_x = x_vals[j] - (cell_w_world / 2)
+                    world_y = y_vals[i] + (cell_h_world / 2)
+
+                    px_x, px_y = self.world_to_screen((world_x, world_y))
+
+                    rect = pygame.Rect(int(px_x), int(px_y), cell_w_px, cell_h_px)
+                    pygame.draw.rect(overlay, color, rect)
+
+        self.screen.blit(overlay, (0, 0))
+
+    def render(self, fps=60, flip=True, debug_shots=None, evaluator=None):
         """Draw the current frame."""
         self.screen.fill((40, 40, 40))  # clear
         self.screen.blit(self.table, (0, 0))
+
+        if evaluator:
+            self.draw_heatmap_overlay(evaluator)
+
+        if debug_shots:
+            radius_px = int(self.sim.ob_radius * self.scale)
+
+            for shot in debug_shots:
+                cb_pos = self.sim.positions[0]
+                ob_pos = self.sim.positions[shot["target_idx"]]
+                gb_pos = shot["ghost_ball_pos"]
+                target_pt = shot["target_pt"]
+                shot_type = shot.get("type", "")
+
+                cb_px = self.world_to_screen(cb_pos)
+                ob_px = self.world_to_screen(ob_pos)
+                gb_px = self.world_to_screen(gb_pos)
+                target_px = self.world_to_screen(target_pt)
+
+                # ==========================================
+                # 1. CUE BALL PATH (White)
+                # ==========================================
+                cb_path = [cb_px]
+                if "kick" in shot_type and "bounce_points" in shot:
+                    for bp in shot["bounce_points"]:
+                        cb_path.append(self.world_to_screen(bp))
+                cb_path.append(gb_px)
+
+                if len(cb_path) > 2:
+                    pygame.draw.lines(self.screen, (200, 200, 200), False, cb_path, 1)
+                else:
+                    pygame.draw.line(self.screen, (200, 200, 200), cb_path[0], cb_path[1], 1)
+
+                # Draw the Primary Ghost Ball (Where Cue Ball aims)
+                pygame.draw.circle(self.screen, (255, 255, 255), (int(gb_px[0]), int(gb_px[1])), radius_px, 1)
+
+                # ==========================================
+                # 2. COMPLEX PATHS (Plants & Caroms)
+                # ==========================================
+                if shot_type == "plant":
+                    combo_pos = self.sim.positions[shot["combo_idx"]]
+                    gb1_pos = shot["gb1_pos"]
+
+                    combo_px = self.world_to_screen(combo_pos)
+                    gb1_px = self.world_to_screen(gb1_pos)
+
+                    # Combo Ball -> GB1 (Orange)
+                    pygame.draw.line(self.screen, (255, 165, 0), combo_px, gb1_px, 1)
+                    # Target Ball -> Pocket (Yellow)
+                    pygame.draw.line(self.screen, (255, 255, 50), ob_px, target_px, 1)
+
+                    # Draw Intermediate Ghost Ball
+                    pygame.draw.circle(self.screen, (255, 165, 0), (int(gb1_px[0]), int(gb1_px[1])), radius_px, 1)
+
+                elif shot_type == "carom":
+                    impact_pos = shot["gb1_pos"]  # Where Target Ball hits Kiss Ball
+                    impact_px = self.world_to_screen(impact_pos)
+
+                    # Target Ball -> Impact Point (Orange)
+                    pygame.draw.line(self.screen, (255, 165, 0), ob_px, impact_px, 1)
+                    # Impact Point -> Pocket (Yellow)
+                    pygame.draw.line(self.screen, (255, 255, 50), impact_px, target_px, 1)
+
+                    # Draw Intermediate Ghost Ball (Target ball at impact)
+                    pygame.draw.circle(self.screen, (255, 165, 0), (int(impact_px[0]), int(impact_px[1])), radius_px, 1)
+
+                # ==========================================
+                # 3. STANDARD PATHS (Direct & Banks)
+                # ==========================================
+                else:
+                    ob_path = [ob_px]
+                    if "bank" in shot_type and "bounce_points" in shot:
+                        for bp in shot["bounce_points"]:
+                            ob_path.append(self.world_to_screen(bp))
+                    ob_path.append(target_px)
+
+                    if len(ob_path) > 2:
+                        pygame.draw.lines(self.screen, (255, 255, 50), False, ob_path, 1)
+                    else:
+                        pygame.draw.line(self.screen, (255, 255, 50), ob_path[0], ob_path[1], 1)
+
         self.update_cue_ball_rotation(dt=1 / fps)
+
         self.draw_balls()
+
         if flip:
             pygame.display.flip()
             self.clock.tick(fps)

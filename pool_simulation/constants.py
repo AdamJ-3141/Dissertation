@@ -8,6 +8,7 @@ CUE_BALL_MASS = 0.097  # kg
 OBJECT_BALL_MASS = 0.118  # kg
 TABLE_WIDTH = 1.8288  # m
 TABLE_HEIGHT = 0.9144  # m
+BAULK_LINE_X = -TABLE_WIDTH / 2 + TABLE_WIDTH / 5
 CUSHION_WIDTH = 0.06  # m
 CUSHION_HEIGHT_EFF = 0.032
 CUSHION_HEIGHT_ACTUAL = 0.038
@@ -39,7 +40,7 @@ COLOUR_MAP = {
     2: (240, 240, 40),  # Yellow Ball
     3: (20, 20, 20),  # Black Ball
 
-# --- Debug Colours ---
+# Debug Colours
     -1: (0, 255, 255),   # Cyan
     -2: (255, 0, 255),   # Magenta
     -3: (255, 128, 0),   # Orange

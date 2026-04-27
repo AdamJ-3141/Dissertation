@@ -67,7 +67,6 @@ def watch_telemetry():
         sidespin = r * np.cos(theta)
         elevation = ((raw_action[4] + 1.0) / 2.0) * 60
 
-        # --- Calculate Aim Line Parameters ---
         speed = float(np.hypot(vx, vy))
 
         # Find a target point along the velocity vector and convert to screen pixels
@@ -78,7 +77,6 @@ def watch_telemetry():
         else:
             aim_screen_x, aim_screen_y = renderer.world_to_screen(sim.positions[0])
 
-        # --- Hold the initial frame for 2 seconds and draw the UI ---
         pause_start = time.time()
         while time.time() - pause_start < 2.0:
             for event in pygame.event.get():
