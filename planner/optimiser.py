@@ -2,6 +2,8 @@ import numpy as np
 import copy
 import time
 import math
+
+from pool_simulation.physics import Simulation
 from .aim_solver import *
 from pool_simulation.constants import *
 
@@ -49,6 +51,28 @@ class ShotOptimizer:
         ordered_powers = [1.2, 0.6, 2.5, 0.2, 3.5]
         R = float(self.sim.radii[0])
 
+        target_pt = geometric_shot.get("target_pt")
+        ob_pos = self.sim.positions[target_idx][:2]
+
+        dist_pot = math.hypot(target_pt[0] - ob_pos[0], target_pt[1] - ob_pos[1])
+        dist_cb_to_gb = math.hypot(gb_pos[0] - cb_pos[0], gb_pos[1] - cb_pos[1])
+
+        is_plant = (shot_type == "plant")
+        dist_combo = 0.0
+
+        if is_plant:
+            combo_idx = geometric_shot.get("combo_idx")
+            if combo_idx is not None:
+                combo_pos = self.sim.positions[combo_idx][:2]
+                gb1_pos = geometric_shot.get("gb1_pos", ob_pos)
+                dist_combo = math.hypot(gb1_pos[0] - combo_pos[0], gb1_pos[1] - combo_pos[1])
+
+        efficiency = geometric_shot.get("efficiency", 1.0)
+        eff1 = geometric_shot.get("eff1", efficiency)
+        eff2 = geometric_shot.get("eff2", 1.0)
+        m_cb = self.sim.cb_mass
+        m_ob = self.sim.ob_mass
+
         for tip_x, tip_y in self.spins:
             for power in ordered_powers:
 
@@ -75,6 +99,13 @@ class ShotOptimizer:
                 w_roll = tip_y * base_spin_magnitude
                 w_z_raw = tip_x * base_spin_magnitude
                 w_dir = w_z_raw * math.sin(elevation_rad)
+
+                v_impact = get_impact_velocity(v_mag, w_roll, R, MU_S, MU_R, g, dist_cb_to_gb)
+                if not check_sufficient_speed(
+                        v_impact, eff1, eff2, dist_combo, dist_pot,
+                        m_cb, m_ob, RESTITUTION, MU_S, MU_R, g, is_plant
+                ):
+                    continue
 
                 exact_aim_angle, converged = solve_exact_aim_angle(
                     cb_pos[0], cb_pos[1], gb_pos[0], gb_pos[1],
@@ -149,7 +180,7 @@ class ShotOptimizer:
 
         return True
 
-    def _verify_shot_on_real_table(self, sim_instance, shot_dict, aim_angle, p, t, s, el):
+    def _verify_shot_on_real_table(self, sim_instance: Simulation, shot_dict, aim_angle, p, t, s, el):
         vx = p * np.cos(aim_angle)
         vy = p * np.sin(aim_angle)
 
@@ -160,6 +191,15 @@ class ShotOptimizer:
 
         if shot_data["error"] or 0 in shot_data["balls_potted"]:
             return None
+
+        gb_target = shot_dict.get("ghost_ball_pos")
+        if gb_target is not None:
+            cb_impact = sim_instance.positions[0][:2]
+            dist = math.hypot(cb_impact[0] - gb_target[0], cb_impact[1] - gb_target[1])
+
+            # If the engine sideswiped the ball 7.7mm away from the ghost ball, reject the curve!
+            if dist > 0.001:
+                return None
 
         # Verify the very first thing the cue ball touched was the correct target
         first_target = shot_dict.get("combo_idx", shot_dict["target_idx"])

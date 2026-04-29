@@ -4,35 +4,26 @@ import threading
 import numpy as np
 from pool_simulation.physics.engine import Simulation
 from pool_simulation.render.pygame_renderer import Renderer
-from agent import Agent
+from agent import Agent, Human
 from match import Match, TurnState
 
 
 def main():
 
     with open("debug_pop_gen_0.json", "r") as f:
-        population = json.load(f)
+        pop = json.load(f)
 
-    p1_weights = population[0]
-    p2_weights = population[7]
+    p1_weights = pop[1]
+    p2_weights = pop[3]
 
     # 2. Initialize simulation and restore state
     sim = Simulation(n_obj_balls=15)
 
     # Clear default setup
-    sim.positions.fill(0.0)
-    sim.velocities.fill(0.0)
-    sim.angular.fill(0.0)
-    sim.in_play.fill(False)
-    sim.colours.fill(0)
-    sim.ball_states.fill("STOPPED")
-
-    sim.positions = np.array([[0.34631553215067684, 0.4210259002562583], [999.0, 999.0], [999.0, 999.0], [999.0, 999.0], [-0.615582726961229, -0.21952095862475843], [999.0, 999.0], [-0.5239853468687499, -0.4268869128453211], [999.0, 999.0], [999.0, 999.0], [0.481596438273, 0.0], [999.0, 999.0], [999.0, 999.0], [999.0, 999.0], [0.8210824203239896, 0.1027700532325726], [999.0, 999.0], [0.532406438273, 0.0]])
-
-    sim.colours = np.array([0, 1, 1, 1, 2, 2, 2, 1, 1, 2, 1, 2, 1, 2, 2, 3])
-
-    sim.in_play = np.array([True, False, False, False, True, False, True, False, False, True, False, False, False, True, False, True]
-)
+    # sim.set_up_randomly(15)
+    sim.reset(positions=np.array([[-0.5302449219472871, -0.19727313983360267], [-0.6853295201975858, -0.14168115958773864], [0.7691805858943301, -0.15159581826214164], [0.33518236931159096, -0.39540886609430226], [-0.3158725494503566, -0.05993844929682879], [0.0013173909159613917, 0.246289778687296], [0.27106626094276787, 0.028974297695481765], [0.699013836158553, 0.10562442177719716], [0.3600086112332974, 0.4212844349190327], [-0.5495729573701006, 0.04743633856882673], [0.3245050521179267, 0.19129406890193418], [0.1781524379127617, -0.13532573595025688], [0.4368664867836123, 0.12894520371291268], [0.008041566706902814, -0.2219609716817335], [-0.6018088899114244, -0.13781756019650887], [0.8456927333846014, 0.34105729548336866]]),
+              colours=np.array([0, 2, 1, 2, 1, 2, 2, 1, 2, 2, 1, 1, 1, 2, 1, 3]),
+              in_play=np.array([True, True, True, False, False, False, False, False, False, False, False, False, False, False, False, True]))
 
     # 3. Initialize UI and Match
     renderer = Renderer(sim)
@@ -42,8 +33,8 @@ def main():
     match.player_colours[1] = 2
 
     # 4. Initialize the Agents
-    p1 = Agent(sim, weights=p1_weights)
-    p2 = Agent(sim, weights=p2_weights)
+    p1 = Human(sim, renderer)
+    p2 = Agent(sim, weights=None)
     players = {0: p1, 1: p2}
 
     print(f"Recreating Match: Agent {0} vs Agent {7}")
@@ -80,36 +71,16 @@ def main():
         renderer.render(flip=True)
         pygame.display.set_caption(f"Agent {0 if match.turn == 0 else 7} is thinking...")
 
-        # B. Ask the AI for parameters silently on a background thread
-        shot_result = []
-
-        def plan_shot():
-            params = active_player.get_shot_parameters(
-                sim.colours, sim.in_play, sim.positions,
-                match.player_colours[match.turn], match.turn_state,
-                renderer=None  # Detaches the Monte Carlo visualizer
-            )
-            shot_result.append(params)
-
-        # Draw the frozen table ONCE before the AI starts messing with the physics engine
-        renderer.render(flip=True)
+        print(f"\n>>> AGENT {0 if match.turn == 0 else 7} IS PLANNING SHOT <<<")
         pygame.display.set_caption(f"Agent {0 if match.turn == 0 else 7} is thinking...")
 
-        think_thread = threading.Thread(target=plan_shot)
-        think_thread.start()
-
-        # Keep the Pygame window responsive while the agent thinks, BUT DO NOT re-render
-        while think_thread.is_alive():
-            for evt in pygame.event.get():
-                if evt.type == pygame.QUIT:
-                    pygame.quit()
-                    exit()
-
-            # Limit the while-loop so it doesn't eat CPU cycles from the AI
-            renderer.clock.tick(30)
-
-        think_thread.join()
-        vel_x, vel_y, tip_y, tip_x, cue_elev = shot_result[0]
+        # Pass the renderer so the planner can draw its MC thoughts
+        params = active_player.get_shot_parameters(
+            sim.colours, sim.in_play, sim.positions,
+            match.player_colours[match.turn], match.turn_state,
+            renderer=renderer
+        )
+        vel_x, vel_y, tip_y, tip_x, cue_elev = params
 
         # C. Execute the shot and record frames for playback
         valid = sim.strike_cue_ball(vel_x, vel_y, tip_y, tip_x, cue_elev)

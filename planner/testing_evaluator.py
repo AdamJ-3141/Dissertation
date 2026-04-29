@@ -3,13 +3,12 @@ import numpy as np
 from pool_simulation.physics.engine import Simulation
 from pool_simulation.render.pygame_renderer import Renderer
 from planner.evaluator import TableEvaluator
-from pool_simulation.constants import *
 
 
 def main():
     pygame.init()
     pygame.font.init()
-    font = pygame.font.SysFont("consolas", 24)
+    font = pygame.font.SysFont("consolas", 20)
 
     NUM_STATES = 5
     TARGET_COLOUR = 1
@@ -23,93 +22,127 @@ def main():
 
     for i in range(NUM_STATES):
         sim.set_up_randomly(15)
-
-        # We assume they are all in play for the test
         sim.in_play = np.ones(sim.n_obj_balls + 1, dtype=bool)
 
         evaluator = TableEvaluator(sim, target_colour=TARGET_COLOUR)
 
-        # 2. Extract Individual Scores
-        _, _, _, freedom = evaluator.get_full_heatmap()
-        attack = evaluator.direct_pots_score()
-        strat = evaluator.cluster_analysis_score()
+        targets = [idx for idx in range(1, sim.n_obj_balls + 1) if
+                   sim.colours[idx] in (TARGET_COLOUR, 3) and sim.in_play[idx]]
+        num_targets = max(1, len(targets))
 
-        weighted_freedom = freedom * evaluator.w["w_easiness"]
-        weighted_attack = attack * evaluator.w["w_attackability"]
-        weighted_strat = strat * evaluator.w["w_strategic"]
-        total_score = weighted_freedom + weighted_attack + weighted_strat
+        # 1. Extract Individual Scores
+        _, _, _, raw_freedom = evaluator.get_full_heatmap()
+        raw_attack = evaluator.direct_pots_score()
+        norm_strat = evaluator.cluster_analysis_score()
 
-        # 3. Render and Capture
-        renderer.render(evaluator=evaluator, flip=False)
-        raw_surface = renderer.screen.copy()
+        try:
+            norm_vis = evaluator.visibility_analysis_score()
+        except AttributeError:
+            norm_vis = 0.0
 
-        scale_factor = 0.5
-        new_w = int(raw_surface.get_width() * scale_factor)
-        new_h = int(raw_surface.get_height() * scale_factor)
-        state_surface = pygame.transform.smoothscale(raw_surface, (new_w, new_h))
+        # 2. Normalize the remaining scores to a -1.0 to 1.0 scale
+        norm_freedom = raw_freedom
+        norm_attack = min(1.0, (raw_attack / num_targets) / 1.35)
+
+        # 3. Fetch weights safely from JSON
+        w_easiness = evaluator.w.get("w_easiness", 0.33)
+        w_attackability = evaluator.w.get("w_attackability", 0.33)
+        w_strategic = evaluator.w.get("w_strategic", 0.33)
+        w_safety = evaluator.w.get("w_safety", 0.15)
+
+        # 4. Calculate final weighted contributions
+        weighted_freedom = norm_freedom * w_easiness
+        weighted_attack = norm_attack * w_attackability
+        weighted_strat = norm_strat * w_strategic
+        weighted_vis = norm_vis * w_safety
+
+        total_score = weighted_freedom + weighted_attack + weighted_strat + weighted_vis
+
+        # Extract the surface
+        sim.saved_positions = sim.positions.copy()
+        renderer.render(flip=False)
+        surface = renderer.screen.copy()
 
         evaluations.append({
+            "surface": surface,
             "total": total_score,
-            "freedom": freedom,
-            "attack": attack,
-            "strat": strat,
+            "norm_freedom": norm_freedom,
+            "norm_attack": norm_attack,
+            "norm_strat": norm_strat,
+            "norm_vis": norm_vis,
             "w_freedom": weighted_freedom,
             "w_attack": weighted_attack,
             "w_strat": weighted_strat,
-            "surface": state_surface
+            "w_vis": weighted_vis
         })
-    # Sort best to worst
+
+    # Sort by total score (descending)
     evaluations.sort(key=lambda x: x["total"], reverse=True)
 
-    table_w = evaluations[0]["surface"].get_width()
-    table_h = evaluations[0]["surface"].get_height()
+    # --- NEW DISPLAY LOGIC: ONE AT A TIME ---
+    table_w, table_h = renderer.screen.get_size()
 
-    text_panel_w = 400
-    row_h = table_h
-
-    master_surface = pygame.Surface((table_w + text_panel_w, row_h * NUM_STATES))
-    master_surface.fill((30, 30, 30))
+    # Resize the Pygame display to fit one table + 450px for the text panel
+    screen = pygame.display.set_mode((table_w + 450, table_h))
 
     for idx, eval_data in enumerate(evaluations):
-        y_offset = idx * row_h
+        screen.fill((30, 30, 30))
 
-        # Blit table image
-        master_surface.blit(eval_data["surface"], (0, y_offset))
+        # Blit the table image
+        screen.blit(eval_data["surface"], (0, 0))
+
+        pygame.display.set_caption(f"Evaluator Sandbox | Rank {idx + 1}/{NUM_STATES} | PRESS SPACE FOR NEXT")
 
         # Render Text
         texts = [
-            f"Rank: #{idx + 1}",
+            f"Rank: #{idx + 1} of {NUM_STATES}",
             f"Total Score: {eval_data['total']:>7.3f}",
-            "-" * 30,
-            "Raw Metrics:",
-            f"  Freedom:   {eval_data['freedom']:>7.3f}",
-            f"  Attack:    {eval_data['attack']:>7.3f}",
-            f"  Strategic: {eval_data['strat']:>7.3f}",
-            "-" * 30,
+            "-" * 35,
+            "Normalized Metrics (-1.0 to 1.0):",
+            f"  Easiness:  {eval_data['norm_freedom']:>7.3f}",
+            f"  Attack:    {eval_data['norm_attack']:>7.3f}",
+            f"  Strategic: {eval_data['norm_strat']:>7.3f}",
+            f"  Safety:    {eval_data['norm_vis']:>7.3f}",
+            "-" * 35,
             "Weighted Contributions:",
-            f"  Freedom:   {eval_data['w_freedom']:>7.3f}",
+            f"  Easiness:  {eval_data['w_freedom']:>7.3f}",
             f"  Attack:    {eval_data['w_attack']:>7.3f}",
             f"  Strategic: {eval_data['w_strat']:>7.3f}",
+            f"  Safety:    {eval_data['w_vis']:>7.3f}",
+            "",
+            "[PRESS SPACE TO VIEW NEXT]"
         ]
 
-        text_y = y_offset + 40
+        text_y = 40
         for line in texts:
-            # Color total score green/red based on value roughly
-            color = (255, 255, 255) if "Rank" not in line else (100, 255, 100)
+            if "Rank" in line:
+                color = (100, 255, 100)
+            elif "Total Score" in line:
+                color = (255, 215, 0) if eval_data['total'] > 0 else (255, 100, 100)
+            elif "SPACE" in line:
+                color = (150, 150, 255)
+            else:
+                color = (200, 200, 200)
+
             text_surf = font.render(line, True, color)
-            master_surface.blit(text_surf, (table_w + 30, text_y))
-            text_y += 30
+            screen.blit(text_surf, (table_w + 20, text_y))
+            text_y += 25
 
-        # Draw a separator line
-        pygame.draw.line(master_surface, (100, 100, 100), (0, y_offset + row_h - 1),
-                         (table_w + text_panel_w, y_offset + row_h - 1), 2)
+        pygame.display.flip()
 
-    # Save to disk
-    out_file = "evaluation_report.png"
-    pygame.image.save(master_surface, out_file)
-    print(f"Done! Graphic saved to {out_file}")
+        # Wait for user to press SPACE or QUIT
+        waiting = True
+        while waiting:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    return
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        waiting = False
+
     pygame.quit()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

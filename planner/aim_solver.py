@@ -1,8 +1,9 @@
 import math
+import numpy as np
 from numba import njit
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def _get_piecewise_position(p0_x, p0_y, v_mag, alpha, w_roll, w_dir, t, mu_s, mu_r, g, R):
     vx = v_mag * math.cos(alpha)
     vy = v_mag * math.sin(alpha)
@@ -60,7 +61,7 @@ def _get_piecewise_position(p0_x, p0_y, v_mag, alpha, w_roll, w_dir, t, mu_s, mu
         return px, py
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def solve_exact_aim_angle(p0_x, p0_y, p1_x, p1_y, v_mag, w_roll, w_dir, mu_s, mu_r, g, R, max_iter=30, tol=1e-4):
     dx = p1_x - p0_x
     dy = p1_y - p0_y
@@ -84,7 +85,8 @@ def solve_exact_aim_angle(p0_x, p0_y, p1_x, p1_y, v_mag, w_roll, w_dir, mu_s, mu
         Fx = px - p1_x
         Fy = py - p1_y
 
-        if math.hypot(Fx, Fy) < tol:
+        miss_dist = math.hypot(Fx, Fy)
+        if miss_dist < tol:
             return alpha, True
 
         px_a, py_a = _get_piecewise_position(p0_x, p0_y, v_mag, alpha + delta, w_roll, w_dir, t, mu_s, mu_r, g, R)
@@ -120,7 +122,7 @@ def solve_exact_aim_angle(p0_x, p0_y, p1_x, p1_y, v_mag, w_roll, w_dir, mu_s, mu
     return alpha, False
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def check_path_obstruction(start_x, start_y, end_x, end_y, circle_x, circle_y, circle_radius, path_radius):
     """
     Checks if a circle obstructs a sweeping path between two points.
@@ -155,7 +157,7 @@ def check_path_obstruction(start_x, start_y, end_x, end_y, circle_x, circle_y, c
     return dist_sq < (circle_radius + path_radius) ** 2
 
 
-@njit(cache=True)
+@njit(cache=True, fastmath=True)
 def check_escape_rays_numba(gb_x, gb_y, obstacles, num_rays, escape_dist, path_radius):
     """
     Blasts outward rays from a coordinate.
@@ -202,3 +204,107 @@ def check_escape_rays_numba(gb_x, gb_y, obstacles, num_rays, escape_dist, path_r
             return True  # A completely clear path exists!
 
     return False  # Walled in completely
+
+
+@njit(cache=True, fastmath=True)
+def check_sufficient_speed(v_cb_impact, eff1, eff2, dist_combo, dist_pot, m_cb, m_ob, restitution, mu_s, mu_r, g,
+                           is_plant):
+    if v_cb_impact <= 0.0:
+        return False
+
+    if not is_plant:
+        mass_factor = (m_cb * (1.0 + restitution)) / (m_cb + m_ob)
+        v_ob_initial = v_cb_impact * eff1 * mass_factor
+
+        if v_ob_initial <= 0.0:
+            return False
+
+        v_ob_sq = v_ob_initial * v_ob_initial
+        d_slide = (12.0 * v_ob_sq) / (49.0 * mu_s * g)
+        d_roll = (25.0 * v_ob_sq) / (98.0 * mu_r * g)
+        return (d_slide + d_roll) >= (dist_pot * 0.9)
+    else:
+        # Plant Shot: 2-stage momentum transfer
+        mass_factor_1 = (m_cb * (1.0 + restitution)) / (m_cb + m_ob)
+        mass_factor_2 = (1.0 + restitution) / 2.0
+
+        # 1. CB hits Combo Ball (Apply eff2 here!)
+        v_combo_initial = v_cb_impact * eff2 * mass_factor_1
+
+        # 2. Combo Ball travels dist_combo
+        a_roll = 0.5 * mu_r * g
+        v_combo_impact_sq = v_combo_initial ** 2 - 2 * a_roll * dist_combo
+
+        if v_combo_impact_sq <= 0.0:
+            return False
+
+        v_combo_impact = math.sqrt(v_combo_impact_sq)
+
+        # 3. Combo hits Target Ball (Apply eff1 here!)
+        v_target_initial = v_combo_impact * eff1 * mass_factor_2
+
+        if v_target_initial <= 0.0:
+            return False
+
+        v_ob_sq = v_target_initial * v_target_initial
+        d_slide = (12.0 * v_ob_sq) / (49.0 * mu_s * g)
+        d_roll = (25.0 * v_ob_sq) / (98.0 * mu_r * g)
+
+        return (d_slide + d_roll) >= (dist_pot * 0.9)
+
+
+@njit(cache=True, fastmath=True)
+def get_impact_velocity(v_mag, w_roll, R, mu_s, mu_r, g, dist):
+    u0 = v_mag - (R * w_roll)
+    u_mag = abs(u0)
+
+    if u_mag < 1e-6:
+        # Pure rolling
+        v_sq = v_mag**2 - 2 * (0.5 * mu_r * g) * dist
+        return math.sqrt(v_sq) if v_sq > 0 else 0.0
+
+    t_s = (2.0 / 7.0) * u_mag / (mu_s * g)
+    sign_u = 1.0 if u0 > 0 else -1.0
+    a_slide = -sign_u * mu_s * g
+
+    d_s = v_mag * t_s + 0.5 * a_slide * (t_s ** 2)
+
+    if dist <= d_s:
+        # Impacts while sliding
+        v_sq = v_mag**2 + 2 * a_slide * dist
+        return math.sqrt(v_sq) if v_sq > 0 else 0.0
+    else:
+        # Impacts after transitioning to roll
+        v_s = v_mag + a_slide * t_s
+        if v_s <= 0:
+            return 0.0
+        d_roll = dist - d_s
+        v_sq = v_s**2 - 2 * (0.5 * mu_r * g) * d_roll
+        return math.sqrt(v_sq) if v_sq > 0 else 0.0
+
+
+@njit(cache=True, fastmath=True)
+def get_solver_trajectory(p0_x, p0_y, p1_x, p1_y, v_mag, alpha, w_roll, w_dir, mu_s, mu_r, g, R, num_points=30):
+    """
+    Samples the mathematical solver's predicted curve.
+    """
+    dist_target = math.hypot(p1_x - p0_x, p1_y - p0_y)
+
+    # Estimate the maximum time required to reach the target distance
+    # Assumes average speed is at least half of initial speed
+    t_max = dist_target / (v_mag * 0.3 + 1e-6)
+
+    points = np.zeros((num_points, 2), dtype=np.float64)
+    dt = t_max / (num_points - 1)
+
+    for i in range(num_points):
+        t = i * dt
+        px, py = _get_piecewise_position(p0_x, p0_y, v_mag, alpha, w_roll, w_dir, t, mu_s, mu_r, g, R)
+        points[i, 0] = px
+        points[i, 1] = py
+
+        # Stop sampling once we mathematically pass the ghost ball distance
+        if math.hypot(px - p0_x, py - p0_y) > dist_target + 0.05:
+            return points[:i + 1]
+
+    return points

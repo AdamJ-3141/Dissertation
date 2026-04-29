@@ -477,7 +477,9 @@ class ShotGenerator:
                             "seed_angle": aim_angle,
                             "target_pt": target_pt,
                             "type": "plant",
-                            "efficiency": efficiency
+                            "efficiency": efficiency,
+                            "eff1": cos_theta1,
+                            "eff2": cos_theta2
                         })
 
         return plant_shots

@@ -110,10 +110,10 @@ def run_tournament(gen, pop):
 
     total_tournament_turns = 0
     total_tournament_frames = 0
-    print(f"Starting tournament on 10 cores")
+    print(f"Starting tournament on 14 cores")
 
     # Use Pebble's ProcessPool to actively terminate frozen OS processes
-    with ProcessPool(max_workers=12) as pool:
+    with ProcessPool(max_workers=14) as pool:
         futures = {}
         for ind, (p1_idx, p2_idx) in enumerate(matchups):
             w1 = pop[p1_idx]
@@ -138,7 +138,9 @@ def run_tournament(gen, pop):
                 results[p2_idx] -= 2
 
             except Exception as e:
-                print(f"\n[WORKER CRASH] Agent {p1_idx} vs Agent {p2_idx} crashed: {e}")
+                import traceback
+                print(f"\n[WORKER CRASH] Agent {p1_idx} vs Agent {p2_idx} crashed:", e)
+                traceback.print_exc()
 
     avg_turns_per_frame = total_tournament_turns / total_tournament_frames if total_tournament_frames > 0 else 0
     return results, avg_turns_per_frame
@@ -159,8 +161,8 @@ def crossover_and_mutate(w1, w2):
 
 if __name__ == '__main__':
     POP_SIZE = 8
-    START_GEN = 10  # TWEAK: Start at index 10 (Generation 11)
-    TOTAL_GENERATIONS = 20  # TWEAK: Train up to 20 total generations
+    START_GEN = 0  # TWEAK: Start at index 10 (Generation 11)
+    TOTAL_GENERATIONS = 5  # TWEAK: Train up to 20 total generations
 
     if START_GEN > 0:
         print(f"Resuming training from Generation {START_GEN + 1}...")

@@ -24,14 +24,14 @@ ALPHA_M = 0.867338336423  # rad
 MU_S = 0.24
 MU_R = 0.03
 MU_SP = 0.02
-MU_B = 0.04
+MU_B = 0.01
 E_C = 0.82  # Cushion coefficient of restitution
 MU_C = 0.2  # Cushion friction coefficient (grippiness of the cloth on the rubber)
 K_N = 1e4  # Cushion normal spring stiffness
 BETA_N = 1.0  # Normal mass-matrix coefficient
 BETA_T = 3.5  # Tangential mass-matrix coefficient (1 + mR^2/I = 1 + 2.5 = 3.5)
 g = 9.80665
-RESTITUTION = 1.0
+RESTITUTION = 0.98
 MAX_SPEED = 10  # m/s
 FPS = 60
 COLOUR_MAP = {

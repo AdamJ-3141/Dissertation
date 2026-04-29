@@ -278,6 +278,52 @@ class TableEvaluator:
 
         return total_score
 
+    def visibility_analysis_score(self):
+        targets = [i for i in range(1, self.sim.n_obj_balls + 1) if
+                   self.sim.colours[i] in (self.colour_set, 3) and self.sim.in_play[i]]
+
+        if not targets:
+            return 0.0
+
+        cb_pos = self.sim.positions[0][:2]
+        total_visibility_points = 0
+
+        for t_idx in targets:
+            t_pos = self.sim.positions[t_idx][:2]
+            v_cb_t = t_pos - cb_pos
+            dist = np.linalg.norm(v_cb_t)
+
+            if dist < 1e-6:
+                total_visibility_points += 3
+                continue
+
+            dir_t = v_cb_t / dist
+            # Get the perpendicular vector to find the extreme left and right edges
+            perp = np.array([-dir_t[1], dir_t[0]])
+
+            # The extreme edges the cue ball center can aim at to graze the object ball.
+            # We use 1.95 * R instead of 2.0 to prevent floating-point micro-grazes from returning True.
+            offset = perp * (OBJECT_BALL_RADIUS * 1.95)
+
+            # Check all 3 physical lines of sight
+            center_clear = self.is_path_clear(cb_pos, t_pos, ignore_indices=[0, t_idx])
+            left_clear = self.is_path_clear(cb_pos, t_pos + offset, ignore_indices=[0, t_idx])
+            right_clear = self.is_path_clear(cb_pos, t_pos - offset, ignore_indices=[0, t_idx])
+
+            if center_clear: total_visibility_points += 1
+            if left_clear: total_visibility_points += 1
+            if right_clear: total_visibility_points += 1
+
+        # Evaluate the penalty based on how many total "lines of sight" we have to our legal balls
+        if total_visibility_points == 0:
+            return -1.5  # Total Snooker (cannot hit ANY part of ANY legal ball)
+        elif total_visibility_points <= 2:
+            return -0.5  # Severe Snooker (can only scrape the edge of one ball)
+        elif total_visibility_points < len(targets) * 2:
+            return -0.2  # Minor restriction
+        else:
+            return 0.0  # We have sufficient visibility across the table, no penalty applied
+
     def cluster_analysis_score(self):
         targets = [i for i in range(1, self.sim.n_obj_balls + 1) if
                    self.sim.colours[i] in (self.colour_set, 3) and self.sim.in_play[i]]
@@ -332,7 +378,7 @@ class TableEvaluator:
         max_recovery = abs(penalties) * 0.85
         applied_bonus = min(bonuses, max_recovery)
 
-        return penalties + applied_bonus
+        return (penalties + applied_bonus) / max(1, len(targets))
 
     def _breakout_potential(self, t_idx, p_pos, clusters):
         t_pos = self.sim.positions[t_idx][:2]
@@ -389,11 +435,33 @@ class TableEvaluator:
                    self.sim.colours[i] in (self.colour_set, 3) and self.sim.in_play[i]]
         if not targets: return 0.0
 
-        _, _, _, freedom_easiness = self.get_full_heatmap()
+        _, _, _, freedom_easiness = self.get_full_heatmap()  # Already strictly 0.0 to 1.0
 
-        return (freedom_easiness * self.w["w_easiness"]) + \
-            (self.direct_pots_score() / len(targets) * self.w["w_attackability"]) + \
-            self.cluster_analysis_score() * self.w["w_strategic"]
+        # Normalize attackability to a maximum of ~1.0
+        raw_attackability = self.direct_pots_score() / len(targets)
+        theoretical_max_pot_score = 1.35
+        norm_attackability = min(1.0, raw_attackability / theoretical_max_pot_score)
+
+        norm_clusters = self.cluster_analysis_score()
+        norm_visibility = self.visibility_analysis_score()
+
+        w_easiness = self.w.get("w_easiness", 0.33)
+        w_attackability = self.w.get("w_attackability", 0.33)
+        w_strategic = self.w.get("w_strategic", 0.33)
+        w_safety = self.w.get("w_safety", 0.15)
+
+        # Force the GA's mutated weights to act as percentages of 100%
+        total_w = w_easiness + w_attackability + abs(w_strategic) + abs(w_safety)
+        if total_w > 0:
+            w_easiness /= total_w
+            w_attackability /= total_w
+            w_strategic /= total_w
+            w_safety /= total_w
+
+        return (freedom_easiness * w_easiness) + \
+            (norm_attackability * w_attackability) + \
+            (norm_clusters * w_strategic) + \
+            (norm_visibility * w_safety)
 
     def is_ghost_ball_accessible(self, gb_pos, ignore_indices=None):
         if ignore_indices is None: ignore_indices = []

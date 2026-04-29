@@ -607,3 +607,15 @@ class Renderer:
         if flip:
             pygame.display.flip()
             self.clock.tick(fps)
+
+    def wait_for_space(self):
+        """Blocks execution until the user presses the SPACE bar."""
+        waiting = True
+        while waiting:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    exit()
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                    waiting = False
+            self.clock.tick(30)
