@@ -16,7 +16,7 @@ def main():
     p1_weights = pop[1]
     p2_weights = pop[3]
 
-    # 2. Initialize simulation and restore state
+    # Initialize simulation and restore state
     sim = Simulation(n_obj_balls=15)
 
     # Clear default setup
@@ -25,21 +25,21 @@ def main():
               colours=np.array([0, 2, 1, 2, 1, 2, 2, 1, 2, 2, 1, 1, 1, 2, 1, 3]),
               in_play=np.array([True, True, True, False, False, False, False, False, False, False, False, False, False, False, False, True]))
 
-    # 3. Initialize UI and Match
+    # Initialize UI and Match
     renderer = Renderer(sim)
     match = Match(sim, custom_setup=True)
     match.turn = 0
     match.player_colours[0] = 1
     match.player_colours[1] = 2
 
-    # 4. Initialize the Agents
+    # Initialize the Agents
     p1 = Human(sim, renderer)
     p2 = Agent(sim, weights=None)
     players = {0: p1, 1: p2}
 
     print(f"Recreating Match: Agent {0} vs Agent {7}")
 
-    # 5. Main Game Loop (Adapted from play.py)
+    # Main Game Loop (Adapted from play.py)
     while match.turn_state != TurnState.GAME_OVER:
         active_player = players[match.turn]
         playback_frames = []
@@ -82,15 +82,15 @@ def main():
         )
         vel_x, vel_y, tip_y, tip_x, cue_elev = params
 
-        # C. Execute the shot and record frames for playback
+        # Execute the shot and record frames for playback
         valid = sim.strike_cue_ball(vel_x, vel_y, tip_y, tip_x, cue_elev)
         shot_data = sim.run(framerate=60, frame_callback=record_frame)
         shot_data["valid"] = valid
 
-        # D. Referee evaluates the result
+        # Referee evaluates the result
         match.evaluate_shot(shot_data)
 
-        # E. Save real state, play back the visualizer, then restore real state
+        # Save real state, play back the visualizer, then restore real state
         final_referee_state = {
             'positions': sim.positions.copy(),
             'angular': sim.angular.copy(),

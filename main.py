@@ -23,18 +23,18 @@ def safe_wait(milliseconds):
 
 
 def main():
-    # 1. Initialize Physics Engine
+    # Initialize Physics Engine
     sim = Simulation(n_obj_balls=15)
     sim.set_up_randomly(15)
 
-    # 2. Initialize Agent with controllable weights
+    # Initialize Agent with controllable weights
     agent = Agent(sim, weights=None)
 
-    # 3. Initialize Match and Renderer
+    # Initialize Match and Renderer
     match = Match(sim, custom_setup=True)
     renderer = Renderer(sim)
 
-    # 4. Set the target color (e.g., Reds = 1)
+    # Set the target color (e.g., Reds = 1)
     target_color = 1
     match.player_colours[0] = target_color
 
@@ -84,7 +84,7 @@ def main():
         power = np.hypot(vx, vy)
         aim_angle = np.atan2(vy, vx)
 
-        # Render table and UI elements, but DON'T flip the display yet
+        # Render table and UI elements
         renderer.render(flip=False)
         renderer.draw_spin_ui(sidespin, topspin)
         renderer.draw_power_scale(power)
@@ -102,7 +102,7 @@ def main():
             # Convert the physical coordinates to screen pixels
             aim_screen = renderer.world_to_screen([aim_world_x, aim_world_y])
 
-            # Draw using your custom renderer method
+            # Draw using custom renderer method
             renderer.draw_aim_line(
                 aim_screen[0], aim_screen[1],
                 power, topspin, sidespin, elevation
@@ -117,7 +117,7 @@ def main():
         aim_deg = np.degrees(aim_angle)
         print(f"Agent executing shot: Pwr={power:.2f}, Aim={aim_deg:.2f}°, Spin=({topspin:.2f}, {sidespin:.2f})")
 
-        # 1. The Recorder
+        # The Recorder
         recorded_frames = []
 
         def record_frame_callback(state_ignored):
@@ -140,7 +140,7 @@ def main():
         sim.run(framerate=60, frame_callback=record_frame_callback)
         print(f"Recorded {len(recorded_frames)} frames. Starting playback...")
 
-        # 2. The Playback Loop
+        # The Playback Loop
         clock = pygame.time.Clock()
         for frame in recorded_frames:
             for event in pygame.event.get():

@@ -48,7 +48,7 @@ def _get_piecewise_position(p0_x, p0_y, v_mag, alpha, w_roll, w_dir, t, mu_s, mu
 
         t_roll = t - t_s
 
-        # Prevent the ball from accelerating backward once it stops!
+        # Prevent the ball from accelerating backward once it stops
         t_stop = v_s_mag / (mu_r * g)
         if t_roll > t_stop:
             t_roll = t_stop
@@ -201,7 +201,7 @@ def check_escape_rays_numba(gb_x, gb_y, obstacles, num_rays, escape_dist, path_r
                 break  # Ray failed, move immediately to the next angle
 
         if not ray_blocked:
-            return True  # A completely clear path exists!
+            return True  # A completely clear path exists
 
     return False  # Walled in completely
 
@@ -228,10 +228,8 @@ def check_sufficient_speed(v_cb_impact, eff1, eff2, dist_combo, dist_pot, m_cb, 
         mass_factor_1 = (m_cb * (1.0 + restitution)) / (m_cb + m_ob)
         mass_factor_2 = (1.0 + restitution) / 2.0
 
-        # 1. CB hits Combo Ball (Apply eff2 here!)
         v_combo_initial = v_cb_impact * eff2 * mass_factor_1
 
-        # 2. Combo Ball travels dist_combo
         a_roll = 0.5 * mu_r * g
         v_combo_impact_sq = v_combo_initial ** 2 - 2 * a_roll * dist_combo
 
@@ -240,7 +238,6 @@ def check_sufficient_speed(v_cb_impact, eff1, eff2, dist_combo, dist_pot, m_cb, 
 
         v_combo_impact = math.sqrt(v_combo_impact_sq)
 
-        # 3. Combo hits Target Ball (Apply eff1 here!)
         v_target_initial = v_combo_impact * eff1 * mass_factor_2
 
         if v_target_initial <= 0.0:

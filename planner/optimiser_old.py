@@ -23,10 +23,10 @@ class ShotOptimizer:
     def __init__(self, sim_instance):
         self.sim = sim_instance
 
-        # 1. Power Levels
+        # Power Levels
         self.power_levels = [0.2, 0.6, 1.2, 2.5, 3.5]
 
-        # 2. Spin Grid (Polar to Cartesian)
+        # Spin Grid (Polar to Cartesian)
         self.spins = []
         self.spins.append((0.0, 0.0))  # R = 0
 
@@ -91,15 +91,15 @@ class ShotOptimizer:
 
         base_ghost_sim = self._setup_ghost_table(geometric_shot)
 
-        # 1. Test a "baseline" medium power first.
+        # Test a "baseline" medium power first.
         # If the path is blocked at 1.2 power, it will be blocked at 2.5 and 0.2.
         ordered_powers = [1.2, 0.6, 2.5, 0.2, 3.5]
 
-        # 2. Outer Loop: Spins (Because spin dictates the physical shape/swerve of the shot)
+        # Outer Loop: Spins (Because spin dictates the physical shape/swerve of the shot)
         for tip_x, tip_y in self.spins:
             spin_path_blocked = False
 
-            # 3. Inner Loop: Powers (Cull these if the baseline fails)
+            # Inner Loop: Powers (Cull these if the baseline fails)
             for power in ordered_powers:
                 if spin_path_blocked:
                     break  # Cull remaining powers, move to the next spin
@@ -258,9 +258,6 @@ class ShotOptimizer:
             actor_idx = 0
             receiver_idx = target_idx
 
-        # ====================================================================
-        # 1. RUN ANALYTICALLY (No Callback, No Framerate Bottleneck!)
-        # ====================================================================
         vx = p * np.cos(aim_angle)
         vy = p * np.sin(aim_angle)
         test_sim.strike_cue_ball(vx, vy, topspin_offset=t, sidespin_offset=s, elevation_deg=el)
@@ -268,9 +265,6 @@ class ShotOptimizer:
         # Runs instantly to completion
         test_sim.run(until_first_coll=False)
 
-        # ====================================================================
-        # 2. EXTRACT THE TRACE
-        # ====================================================================
         tracker = {
             "cb_min_dist": float('inf'), "cb_cross": 0.0,
             "sec_min_dist": float('inf'), "sec_cross": 0.0,
@@ -288,7 +282,7 @@ class ShotOptimizer:
                 pos_start, vel_start, _, in_play_start = trace[i]
                 pos_end, _, _, _ = trace[i + 1]
 
-                # 1. Cue Ball to First Target
+                # Cue Ball to First Target
                 cb_start = pos_start[0][:2]
                 cb_end = pos_end[0][:2]
                 dist_cb = _distance_point_to_line_segment(first_target_pos, cb_start, cb_end)
@@ -301,7 +295,7 @@ class ShotOptimizer:
                         dp_cb = first_target_pos - cb_start
                         tracker["cb_cross"] = (v_cb[0] * dp_cb[1] - v_cb[1] * dp_cb[0]) / v_cb_norm
 
-                # 2. Actor to Receiver (for plants/caroms)
+                # Actor to Receiver (for plants/caroms)
                 if actor_idx is not None and receiver_pos is not None:
                     if in_play_start[actor_idx]:
                         act_start = pos_start[actor_idx][:2]
@@ -359,9 +353,6 @@ class ShotOptimizer:
                         tracker["ob_cross"] = (v_dir[0] * ideal_dir[1]) - (v_dir[1] * ideal_dir[0])
                         break
 
-        # ====================================================================
-        # 3. REJECTION LOGIC (Untouched from your original code)
-        # ====================================================================
         if test_sim.shot_data["first_ball_hit"] != first_target:
             sign = 1.0 if tracker["cb_cross"] > 0 else -1.0
             err = sign * (tracker["cb_min_dist"] + 30.0)
@@ -519,16 +510,13 @@ class ShotOptimizer:
         real_sim.strike_cue_ball(vx, vy, topspin_offset=t, sidespin_offset=s, elevation_deg=el)
         shot_data = real_sim.run(until_first_coll=False)
 
-        # 1. Did we scratch?
         if 0 in shot_data["balls_potted"] or shot_data["error"]:
             return None
 
-        # 2. Did we hit the right first ball?
         first_target = shot_dict.get("ob1_idx", shot_dict.get("combo_idx", shot_dict["target_idx"]))
         if shot_data["first_ball_hit"] != first_target:
             return None
 
-            # 3. Did the exact intended chronological sequence execute perfectly into the pocket?
         if not self._is_sequence_valid(shot_dict, shot_data["event_history"], require_pot=True):
             return None
 

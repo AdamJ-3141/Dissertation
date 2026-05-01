@@ -45,7 +45,6 @@ def annotate_video(video_path, corners_px, output_json, frame_skip=10, fps=60):
 
     h, w = frame.shape[:2]
 
-    # --- 1. YOUR CUSTOM LENS CALIBRATION ---
     # The raw slider values
     f_slider = 63
     k1_slider = 113
@@ -71,9 +70,7 @@ def annotate_video(video_path, corners_px, output_json, frame_skip=10, fps=60):
     k1 = (k1_slider - 100) / 500.0
     k2 = (k2_slider - 100) / 500.0
     dist_coeffs = np.array([k1, k2, 0, 0, 0], dtype=np.float32)
-    # ---------------------------------------
 
-    # The rest of your setup...
     physics_matrix = get_transform_matrix(corners_px, TABLE_WIDTH, TABLE_HEIGHT)
     visual_dst_pts = np.array([
         [0, 0],  # Top-Left corner of screen
@@ -101,10 +98,7 @@ def annotate_video(video_path, corners_px, output_json, frame_skip=10, fps=60):
     colors = [(255, 255, 255), (0, 0, 255), (0, 255, 255), (255, 0, 0), (0, 255, 0)]
 
     while True:
-        # --- 2. UNDISTORT THE FRAME BEFORE DOING ANYTHING ELSE ---
         frame = cv2.undistort(frame, cam_matrix, dist_coeffs)
-
-        # --- 3. APPLY THE HOMOGRAPHY TO THE FLATTENED FRAME ---
         warped_frame = cv2.warpPerspective(frame, visual_matrix, (VISUAL_W, VISUAL_H))
         current_click = None
 
@@ -186,7 +180,7 @@ def save_data(filename, data):
 
 
 if __name__ == "__main__":
-    # Your locked tripod coordinates
+    # Locked tripod coordinates
     # Order: Top-Left, Top-Middle, Top-Right, Bottom-Middle
     tripod_reference_points = np.array([
         [230, 98],  # Top-Left

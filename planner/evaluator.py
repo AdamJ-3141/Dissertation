@@ -72,7 +72,7 @@ class TableEvaluator:
         if dist_path == 0: return True
         dir_path = v_path / dist_path
 
-        # 1. Check for ball obstructions
+        # Check for ball obstructions
         for i in range(1, self.sim.n_obj_balls + 1):
             if i in ignore_indices or not self.sim.in_play[i]: continue
             v_ball = self.sim.positions[i][:2] - p1
@@ -83,7 +83,7 @@ class TableEvaluator:
                 if dist_to_line < (OBJECT_BALL_RADIUS * 2.0):
                     return False
 
-        # 2. Check for knuckle obstructions
+        # Check for knuckle obstructions
         for cx, cy, cr in self.sim.circles:
             if cr < 0.2:  # Only evaluate actual knuckles, skip massive cushion bounds
                 v_circ = np.array([cx, cy]) - p1
@@ -369,11 +369,11 @@ class TableEvaluator:
                 for p_idx in range(len(self.sim.pockets)):
                     bonuses += self._breakout_potential(t_idx, self.sim.pockets[p_idx][:2], cluster_centers)
 
-        # 1. If the table is completely open, it scores a perfect 0.0
+        # If the table is completely open, it scores a perfect 0.0
         if penalties == 0.0:
             return 0.0
 
-        # 2. If clusters exist, enforce Residual Risk.
+        # If clusters exist, enforce Residual Risk.
         # Bonuses can only offset up to 85% of the total penalties.
         max_recovery = abs(penalties) * 0.85
         applied_bonus = min(bonuses, max_recovery)
@@ -396,7 +396,7 @@ class TableEvaluator:
                 if black_idx is not None:
                     b_pos = self.sim.positions[black_idx][:2]
 
-                    # 1. Find the nearest pocket to the black ball
+                    # Find the nearest pocket to the black ball
                     min_dist = float('inf')
                     nearest_pocket = None
                     for p in self.sim.pockets:
@@ -405,11 +405,11 @@ class TableEvaluator:
                             min_dist = d
                             nearest_pocket = np.array(p[:2])
 
-                    # 2. Check if the black ball is dangerously close
+                    # Check if the black ball is dangerously close
                     if min_dist < 0.2:
                         black_is_closest = True
 
-                        # 3. Check if its cluster partner shields it from the pocket
+                        # Check if its cluster partner shields it from the pocket
                         for m in members:
                             if m != "cushion" and m != black_idx:
                                 m_pos = self.sim.positions[m][:2]
@@ -466,13 +466,13 @@ class TableEvaluator:
     def is_ghost_ball_accessible(self, gb_pos, ignore_indices=None):
         if ignore_indices is None: ignore_indices = []
 
-        # 1. Out of Bounds Check
+        # Out of Bounds Check
         playable_w = (TABLE_WIDTH / 2) - CUE_BALL_RADIUS
         playable_h = (TABLE_HEIGHT / 2) - CUE_BALL_RADIUS
         if not (-playable_w <= gb_pos[0] <= playable_w and -playable_h <= gb_pos[1] <= playable_h):
             return False
 
-        # 2. Compile obstacles into a 2D Numba-friendly array
+        # Compile obstacles into a 2D Numba-friendly array
         obs_list = []
         for i in range(1, self.sim.n_obj_balls + 1):
             if i in ignore_indices or not self.sim.in_play[i]: continue

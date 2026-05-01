@@ -31,9 +31,9 @@ def main():
                 'ball_states': simulation_instance.ball_states.copy()
             })
 
-        # 2. Ask the referee to take a turn.
+        # Ask the referee to take a turn.
         # The referee will automatically call active_player.get_shot_parameters(),
-        # which will trigger the Pygame UI loop in the Human class!
+        # which will trigger the Pygame UI loop in the Human class
         print(f"Player {match.turn + 1}'s turn. Waiting for shot...")
         match.play_turn(active_player, frame_callback=record_frame)
 
@@ -44,7 +44,7 @@ def main():
             'ball_states': sim.ball_states.copy()
         }
 
-        # 3. Playback the physical simulation that just occurred
+        # Playback the physical simulation that just occurred
         for frame in playback_frames:
             sim.positions = frame['positions']
             sim.angular = frame['angular']

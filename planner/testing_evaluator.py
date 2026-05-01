@@ -30,7 +30,7 @@ def main():
                    sim.colours[idx] in (TARGET_COLOUR, 3) and sim.in_play[idx]]
         num_targets = max(1, len(targets))
 
-        # 1. Extract Individual Scores
+        # Extract Individual Scores
         _, _, _, raw_freedom = evaluator.get_full_heatmap()
         raw_attack = evaluator.direct_pots_score()
         norm_strat = evaluator.cluster_analysis_score()
@@ -40,17 +40,17 @@ def main():
         except AttributeError:
             norm_vis = 0.0
 
-        # 2. Normalize the remaining scores to a -1.0 to 1.0 scale
+        # Normalize the remaining scores to a -1.0 to 1.0 scale
         norm_freedom = raw_freedom
         norm_attack = min(1.0, (raw_attack / num_targets) / 1.35)
 
-        # 3. Fetch weights safely from JSON
+        # Fetch weights from JSON
         w_easiness = evaluator.w.get("w_easiness", 0.33)
         w_attackability = evaluator.w.get("w_attackability", 0.33)
         w_strategic = evaluator.w.get("w_strategic", 0.33)
         w_safety = evaluator.w.get("w_safety", 0.15)
 
-        # 4. Calculate final weighted contributions
+        # Calculate final weighted contributions
         weighted_freedom = norm_freedom * w_easiness
         weighted_attack = norm_attack * w_attackability
         weighted_strat = norm_strat * w_strategic
@@ -79,7 +79,6 @@ def main():
     # Sort by total score (descending)
     evaluations.sort(key=lambda x: x["total"], reverse=True)
 
-    # --- NEW DISPLAY LOGIC: ONE AT A TIME ---
     table_w, table_h = renderer.screen.get_size()
 
     # Resize the Pygame display to fit one table + 450px for the text panel

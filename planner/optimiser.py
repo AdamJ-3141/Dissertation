@@ -185,8 +185,6 @@ class ShotOptimizer:
         vy = p * np.sin(aim_angle)
 
         sim_instance.strike_cue_ball(vx, vy, topspin_offset=t, sidespin_offset=s, elevation_deg=el)
-
-        # --- FAST FIX 2: Stop simulation at the exact moment of first impact ---
         shot_data = sim_instance.run(until_first_coll=True)
 
         if shot_data["error"] or 0 in shot_data["balls_potted"]:

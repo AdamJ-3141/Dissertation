@@ -401,11 +401,7 @@ class Renderer:
         pygame.draw.rect(self.screen, (180, 255, 180), r_inner, width=0)
 
     def draw_elevation_ui(self, elevation_deg: float):
-        # ==========================================
-        # 1. UI Positioning & Dimensions
-        # ==========================================
-        # Position the cue tip just to the left of your spin UI.
-        # (Adjust these based on where your spin_ui is drawn)
+
         spin_ui_center_x = self.width - 60
         spin_ui_center_y = 60
 
@@ -422,11 +418,6 @@ class Renderer:
         ferrule_w = 4.0
         butt_w = 7.0
 
-        # ==========================================
-        # 2. Rotation Math
-        # ==========================================
-        # In Pygame, negative Y is "Up" the screen.
-        # We calculate the vector extending backwards from the tip to the butt.
         theta = math.radians(elevation_deg)
         dx = -math.cos(theta)
         dy = -math.sin(theta)
@@ -443,10 +434,6 @@ class Renderer:
                 (cx - nx * half_w, cy - ny * half_w)
             )
 
-        # ==========================================
-        # 3. Calculate Polygon Segments
-        # ==========================================
-        # Central axis points
         p0_x, p0_y = pivot_x, pivot_y  # Tip end
         p1_x, p1_y = p0_x + dx * tip_length, p0_y + dy * tip_length  # Ferrule start
         p2_x, p2_y = p1_x + dx * ferrule_length, p1_y + dy * ferrule_length  # Shaft start
@@ -458,13 +445,9 @@ class Renderer:
         t2_a, t2_b = get_corners(p2_x, p2_y, ferrule_w)
         t3_a, t3_b = get_corners(p3_x, p3_y, butt_w)
 
-        # ==========================================
-        # 4. Rendering
-        # ==========================================
-        # Draw a subtle reference line for the "table bed"
+
         pygame.draw.line(self.screen, (100, 100, 100), (pivot_x - 30, pivot_y), (pivot_x + 10, pivot_y), 1)
 
-        # Optional: Draw a ghost outline of the cue ball it is pointing at
         pygame.draw.circle(self.screen, (60, 60, 60), (int(pivot_x + 15), int(pivot_y)), 15, 1)
 
         # Draw the Blue chalked tip
@@ -538,9 +521,6 @@ class Renderer:
                 gb_px = self.world_to_screen(gb_pos)
                 target_px = self.world_to_screen(target_pt)
 
-                # ==========================================
-                # 1. CUE BALL PATH (White)
-                # ==========================================
                 cb_path = [cb_px]
                 if "kick" in shot_type and "bounce_points" in shot:
                     for bp in shot["bounce_points"]:
@@ -555,9 +535,6 @@ class Renderer:
                 # Draw the Primary Ghost Ball (Where Cue Ball aims)
                 pygame.draw.circle(self.screen, (255, 255, 255), (int(gb_px[0]), int(gb_px[1])), radius_px, 1)
 
-                # ==========================================
-                # 2. COMPLEX PATHS (Plants & Caroms)
-                # ==========================================
                 if shot_type == "plant":
                     combo_pos = self.sim.positions[shot["combo_idx"]]
                     gb1_pos = shot["gb1_pos"]
@@ -585,9 +562,6 @@ class Renderer:
                     # Draw Intermediate Ghost Ball (Target ball at impact)
                     pygame.draw.circle(self.screen, (255, 165, 0), (int(impact_px[0]), int(impact_px[1])), radius_px, 1)
 
-                # ==========================================
-                # 3. STANDARD PATHS (Direct & Banks)
-                # ==========================================
                 else:
                     ob_path = [ob_px]
                     if "bank" in shot_type and "bounce_points" in shot:

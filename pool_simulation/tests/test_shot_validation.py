@@ -5,18 +5,14 @@ from pool_simulation.constants import *
 
 @pytest.fixture
 def engine():
-    # 1. Instantiate your engine normally!
     sim = Simulation()
 
-    # 2. Force the exact table state needed to test the math
     sim.positions = np.array([[0.0, 0.0], [0.1, 0.0]])
     sim.radii = np.array([CUE_BALL_RADIUS, OBJECT_BALL_RADIUS])
     sim.in_play = np.array([True, True])
 
-    # Needs to be a numpy array to match your engine's dtype
     sim.ball_states = np.array(["STOPPED", "STOPPED"])
 
-    # A single vertical cushion to the left of the cue ball (x = -0.05)
     sim.line_segments = [((-0.05, -1.0), (-0.05, 1.0))]
     sim.circles = []
 

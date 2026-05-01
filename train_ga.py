@@ -10,7 +10,7 @@ from pool_simulation.physics.engine import Simulation
 from match import Match
 from agent import Agent
 
-# Load your base defaults to act as the genetic baseline
+# Load base defaults to act as the genetic baseline
 with open('planner/defaults.json', 'r') as f:
     BASE_WEIGHTS = json.load(f)
 
@@ -161,17 +161,17 @@ def crossover_and_mutate(w1, w2):
 
 if __name__ == '__main__':
     POP_SIZE = 8
-    START_GEN = 0  # TWEAK: Start at index 10 (Generation 11)
-    TOTAL_GENERATIONS = 5  # TWEAK: Train up to 20 total generations
+    START_GEN = 5  # TWEAK: Start at index 10 (Generation 11)
+    TOTAL_GENERATIONS = 20  # TWEAK: Train up to 20 total generations
 
     if START_GEN > 0:
         print(f"Resuming training from Generation {START_GEN + 1}...")
 
-        # 1. Load the reigning champion from the previous run
+        # Load the reigning champion from the previous run
         with open(f"best_gen_{START_GEN - 1}.json", "r") as f:
             champion = json.load(f)
 
-        # 2. Rebuild the population using the champion
+        # Rebuild the population using the champion
         population = [copy.deepcopy(champion), copy.deepcopy(champion)]  # Keep the exact champion
 
         # Fill the middle with mutated children of the champion
@@ -182,7 +182,7 @@ if __name__ == '__main__':
         population.append(generate_random_weights())
         population.append(generate_random_weights())
 
-        # 3. Load the existing history so we can append to it
+        # Load the existing history so we can append to it
         with open("training_history.json", "r") as f:
             training_history = json.load(f)
     else:

@@ -59,10 +59,10 @@ def generate_dissertation_plot(real_data, sim_history, bg_image=None, ind=None):
     }
 
     if bg_image is not None:
-        # Extent forces the image corners to perfectly match your physics coordinates
+        # Extent forces the image corners to perfectly match physics coordinates
         plt.imshow(bg_image, extent=(-w, w, -h, h), origin='upper', alpha=0.7)
 
-    # 1. Plot the Ground Truth Data (Scatter Points)
+    # Plot the Ground Truth Data (Scatter Points)
     for bid, pts in real_data.items():
         color = colors.get(bid % len(colors), 'gray')
         label = 'Cue Ball (Real)' if bid == 0 else f'Ball {bid} (Real)'
@@ -74,7 +74,7 @@ def generate_dissertation_plot(real_data, sim_history, bg_image=None, ind=None):
         plt.plot(real_x, real_y, c=color, alpha=0.5, linestyle='--', linewidth=1)
 
 
-    # 2. Plot the Simulated Trajectory (Solid Lines)
+    # Plot the Simulated Trajectory (Solid Lines)
     if len(sim_history) > 0:
         bids = sim_history[0].keys()
         for bid in bids:
@@ -86,7 +86,7 @@ def generate_dissertation_plot(real_data, sim_history, bg_image=None, ind=None):
 
             plt.plot(sim_x, sim_y, c=color, label=label, linewidth=2, alpha=0.8)
 
-    # 3. Draw the Table Bounds (Cushions)
+    # Draw the Table Bounds (Cushions)
     w, h = 1.8288 / 2, 0.9144 / 2
     plt.plot([-w, w, w, -w, -w], [h, h, -h, -h, h], 'k--', linewidth=1.5, label='Cushion Edge')
 
@@ -100,7 +100,7 @@ def generate_dissertation_plot(real_data, sim_history, bg_image=None, ind=None):
     plt.grid(True, linestyle=':', alpha=0.7)
     plt.tight_layout()
 
-    # Save a high-res version directly to your folder for the dissertation
+    # Save a high-res version directly to folder
     plt.savefig(f"calibration_result_plot{ind}.png", dpi=300, bbox_inches='tight')
 
     # Display the window
@@ -308,9 +308,6 @@ def main():
     print(f"Shot 3 Opt Spin           : Top: {opt_spin3[0]:.4f}, Side: {opt_spin3[1]:.4f}")
     print(f"\nAverage Error per Point   : {np.mean(np.abs(result.fun)) * 100:.2f} cm")
 
-    # ==========================================
-    # PLOT 1: THE TABLE CALIBRATION (SHOT 1)
-    # ==========================================
     print("\nSimulating Final Trajectory for Shot 1...")
     max_id_1 = max(start1.keys()) if start1 else 0
     sim1 = Simulation(n_obj_balls=max_id_1, mu_s=mu_s, mu_r=mu_r, e_c=e_c, mu_c=mu_c, restitution=e_b, mu_b=mu_b, k_n=1e4)
@@ -347,9 +344,6 @@ def main():
     bg1 = generate_first_frame_background("Shot_1.mp4")
     generate_dissertation_plot(shot1, sim_history1, ind=1, bg_image=bg1)
 
-    # ==========================================
-    # PLOT 2: THE COLLISION CALIBRATION (SHOT 3)
-    # ==========================================
     print("\nSimulating Final Trajectory for Shot 3...")
     max_id_3 = max(start3.keys()) if start3 else 0
     sim3 = Simulation(n_obj_balls=max_id_3, mu_s=mu_s, mu_r=mu_r, e_c=e_c, mu_c=mu_c, restitution=e_b, mu_b=mu_b, k_n=1e4)
@@ -385,7 +379,7 @@ def main():
     bg3 = generate_first_frame_background("Shot_3.mp4")
     generate_dissertation_plot(shot3, sim_history3, ind=3, bg_image=bg3)
 
-    # 5. Launch Pygame
+    # Launch Pygame
     renderer = Renderer(sim3)
     clock = pygame.time.Clock()
     running, frame_idx = True, 0

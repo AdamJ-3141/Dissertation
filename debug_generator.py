@@ -26,7 +26,7 @@ def draw_dashed_line(surface, color, start_pos, end_pos, width=2, dash_length=10
 
 
 def main():
-    # 1. Initialize Engine
+    # Initialize Engine
     sim = Simulation(n_obj_balls=4)
     sim.in_play[:] = False
 
@@ -50,7 +50,7 @@ def main():
     w = (TABLE_WIDTH / 2) - CUE_BALL_RADIUS
     h = (TABLE_HEIGHT / 2) - CUE_BALL_RADIUS
 
-    # --- Manually execute the Mirror Table Algorithm for the diagram ---
+    # Manually execute the Mirror Table Algorithm for the diagram
     cb_pos = sim.positions[0]
     target_pos = sim.positions[2]
 
@@ -67,7 +67,7 @@ def main():
     print("  [S] - Save screenshot to 'mirror_table.png'")
     print("  [ESC] - Quit")
 
-    # 3. Pygame Display Loop
+    # Pygame Display Loop
     running = True
 
     while running:
@@ -91,14 +91,14 @@ def main():
         target_px = renderer.world_to_screen(target_pos)
         mirrored_px = renderer.world_to_screen(mirrored_target)
 
-        # 1. Draw solid real trajectory (CB -> Bounce Point -> Target)
+        # Draw solid real trajectory (CB -> Bounce Point -> Target)
         pygame.draw.line(renderer.screen, (255, 255, 255), cb_px, bp_px, 2)
         pygame.draw.line(renderer.screen, (255, 255, 255), bp_px, target_px, 2)
 
-        # 3. Draw a red dashed line showing the direct path is snookered!
+        # Draw a red dashed line showing the direct path is snookered!
         draw_dashed_line(renderer.screen, (255, 50, 50), cb_px, target_px, width=2, dash_length=6)
 
-        # 4. Draw transparent target ball showing the virtual mirror position
+        # Draw transparent target ball showing the virtual mirror position
         r_ob = int(OBJECT_BALL_RADIUS * renderer.scale)
         pygame.draw.circle(renderer.screen, (150, 150, 255), (int(mirrored_px[0]), int(mirrored_px[1])), r_ob, 1)
 

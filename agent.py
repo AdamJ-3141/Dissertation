@@ -1,3 +1,5 @@
+import json
+
 import numpy as np
 from pool_simulation.constants import *
 from planner.evaluator import TableEvaluator
@@ -13,12 +15,12 @@ class Agent:
     def get_shot_parameters(self, colours: np.ndarray, in_play: np.ndarray, positions: np.ndarray,
                             target_color: int, turn_state: int, renderer=None) -> tuple:
 
-        # 1. Initialize Evaluator and Planner with current Agent weights
+        # Initialize Evaluator and Planner with current Agent weights
         # self.weights should be a dict of the customizable parameters we defined
         evaluator = TableEvaluator(self.sim, target_color, weights=self.weights)
         planner = ShotPlanner(self.sim, evaluator, self.weights)
 
-        # 2. Ask the Planner for the best strategic decision
+        # Ask the Planner for the best strategic decision
         # Returns ("offensive"|"safety", (aim_angle, power, topspin, sidespin, elevation))
         decision_type, params = planner.find_best_shot(renderer=renderer)
 
@@ -28,7 +30,7 @@ class Agent:
 
         aim_angle, power, topspin, sidespin, elevation = params
 
-        # 3. Convert polar shot power and angle to Cartesian velocity
+        # Convert polar shot power and angle to Cartesian velocity
         vx = power * np.cos(aim_angle)
         vy = power * np.sin(aim_angle)
 
@@ -37,7 +39,7 @@ class Agent:
     def get_cue_ball_in_hand_position(self, colours, in_play, positions, target_color, turn_state):
         evaluator = TableEvaluator(self.sim, target_color, weights=self.weights)
 
-        # 1. Identify valid targets (Own colour, or Black if cleared)
+        # Identify valid targets (Own colour, or Black if cleared)
         if target_color is None:
             my_targets = [i for i in range(1, self.sim.n_obj_balls + 1)
                           if colours[i] in (1, 2) and in_play[i]]
@@ -48,7 +50,7 @@ class Agent:
             if not my_targets:
                 my_targets = [i for i in range(1, self.sim.n_obj_balls + 1) if colours[i] == 3 and in_play[i]]
 
-        # 2. Prioritize Targets (Find the "Problem Balls")
+        # Prioritize Targets
         target_scores = []
         for t_idx in my_targets:
             t_pos = positions[t_idx][:2]
@@ -68,7 +70,7 @@ class Agent:
         # Sort so the hardest balls are targeted first
         target_scores.sort(key=lambda x: x[0])
 
-        # # 3. Calculate Perfect Placement
+        # # Calculate Perfect Placement
         # baulk_limit_x = (-TABLE_WIDTH / 2) + BAULK_LINE_X if turn_state == TurnState.BALL_IN_HAND_BAULK else None
         #
         # for _, t_idx in target_scores:
@@ -101,7 +103,7 @@ class Agent:
         #             if evaluator.is_path_clear(ideal_cb_pos, gb_pos, ignore_indices=[t_idx]):
         #                 return ideal_cb_pos
 
-        # 4. Fallback: Heatmap Peak with Pot Clearance
+        # Fallback: Heatmap Peak with Pot Clearance
         tactical_map, w, h, _ = evaluator.get_full_heatmap()
         ny, nx = tactical_map.shape
         x_coords = np.linspace(-w, w, nx)
@@ -111,8 +113,7 @@ class Agent:
         max_val = -np.inf
 
         # Check if we are restricted to the baulk area
-        baulk_limit_x = (
-                                    -TABLE_WIDTH / 2) + BAULK_LINE_X if turn_state == TurnState.BALL_IN_HAND_BAULK else None
+        baulk_limit_x = (-TABLE_WIDTH / 2) + BAULK_LINE_X if turn_state == TurnState.BALL_IN_HAND_BAULK else None
 
         for i in range(ny):
             for j in range(nx):
@@ -150,7 +151,7 @@ class Agent:
                     max_val = current_val
                     best_pos = test_pos
 
-        # 5. Absolute Desperation Fallback (If no pots are physically possible from anywhere)
+        # Absolute Desperation Fallback (If no pots are physically possible from anywhere)
         if max_val == -np.inf:
             for i in range(ny):
                 for j in range(nx):
@@ -229,7 +230,7 @@ class Human(Agent):
         while not shot_locked:
             self.renderer.render(fps=60, flip=False)
 
-            # 1. Handle Aiming (Mouse)
+            # Handle Aiming (Mouse)
             mouse_pos = pygame.mouse.get_pos()
             target_world_pos = self.renderer.screen_to_world(mouse_pos)
             cue_world_pos = positions[0]
@@ -259,10 +260,7 @@ class Human(Agent):
             if dist > 1e-4:
                 is_valid = self.sim.validate_shot(test_vx, test_vy, self.tip_y, self.tip_x, actual_elevation)
 
-            # ==========================================
-            # RENDER THE UI
-            # ==========================================
-            # Only draw the aiming line if the shot is physically possible!
+            # Only draw the aiming line if the shot is physically possible
             if is_valid:
                 self.renderer.draw_aim_line(mouse_pos[0], mouse_pos[1], self.power, self.tip_y, self.tip_x,
                                             actual_elevation)
@@ -276,9 +274,6 @@ class Human(Agent):
             pygame.display.flip()
             self.renderer.clock.tick(60)
 
-            # ==========================================
-            # HANDLE INPUTS
-            # ==========================================
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     pygame.quit()
@@ -326,3 +321,49 @@ class Human(Agent):
                         shot_locked = True
 
         return vel_x, vel_y, self.tip_y, self.tip_x, actual_elevation
+
+
+class RandomAgent(Agent):
+
+    def __init__(self, sim):
+        super().__init__(sim, None)
+        self.sim = sim
+
+    def get_shot_parameters(self, colours: np.ndarray, in_play: np.ndarray, positions: np.ndarray,
+                            target_color: int, turn_state: int, renderer=None) -> tuple:
+        import random
+
+        vx = random.uniform(0.2, 4.0)
+        vy = random.uniform(0.2, 4.0)
+        topspin = random.uniform(-0.75, 0.75)
+        sidespin = random.uniform(-0.75, 0.75)
+
+        min_el = 89.0  # Fallback to maximum elevation
+        for test_e in range(0, 90):
+            if self.sim.validate_shot(vx, vy, topspin, sidespin, float(test_e)):
+                min_el = float(test_e)
+                break
+
+        return vx, vy, topspin, sidespin, min_el
+
+    def get_cue_ball_in_hand_position(self, colours, in_play, positions, target_color, turn_state):
+        import random
+
+        valid = False
+        pos_x, pos_y = 0, 0
+        while not valid:
+            pos_x = random.uniform(-TABLE_WIDTH / 2 + CUSHION_WIDTH, TABLE_WIDTH / 2 - CUSHION_WIDTH)
+            pos_y = random.uniform(-TABLE_HEIGHT / 2 + CUSHION_WIDTH, TABLE_HEIGHT / 2 - CUSHION_WIDTH)
+            valid = True
+            for p in positions:
+                if (p[0] - pos_x)**2 + (p[1] - pos_y)**2 < (2*OBJECT_BALL_RADIUS)**2:
+                    valid = False
+        return np.array([pos_x, pos_y])
+
+
+class GreedyAgent(Agent):
+
+    def __init__(self, sim):
+        with open("planner/greedy_defaults.json") as f:
+            w = json.load(f)
+        super().__init__(sim, w)

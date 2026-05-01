@@ -5,13 +5,13 @@ from pool_simulation.physics import Simulation
 import time
 
 def test_speed():
-    # 1. Run a "Dummy" shot to force Numba to compile everything
+    # Run a "Dummy" shot to force Numba to compile everything
     sim = Simulation(n_obj_balls=0)
     sim.reset(positions=np.array([[0.0, 0.0]]), colours=np.array([0]), in_play=np.array([True]))
     sim.propel_ball(np.array([True]), np.array([[2.0, 2.0]]), np.array([[0.0, 0.0, 30.0]]))
-    sim.run()  # <--- Numba compiles here. It will take ~0.6 seconds.
+    sim.run()
 
-    # 2. NOW start the real test
+    # NOW start the real test
     print("Compilation finished. Starting speed test...")
     sim.reset(positions=np.array([[0.0, 0.0]]), colours=np.array([0]), in_play=np.array([True]))
     sim.propel_ball(np.array([True]), np.array([[2.0, 2.0]]), np.array([[0.0, 0.0, 30.0]]))

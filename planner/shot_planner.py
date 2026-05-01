@@ -15,7 +15,6 @@ class ShotPlanner:
         self.evaluator = evaluator
         self.w = self.evaluator.w
 
-        # --- NEW: Correct Open Table Logic ---
         if self.evaluator.colour_set is None:
             # Open Table: Can target any Red (1) or Yellow (2)
             target_set = [i for i in range(1, self.sim.n_obj_balls + 1)
@@ -96,7 +95,7 @@ class ShotPlanner:
                     params = (aim_angle, power, topspin, sidespin, min_el)
 
                     # Route the safety shot through the Monte Carlo evaluator!
-                    # 3 iterations is usually enough for a fast safety check
+                    # iterations is usually enough for a fast safety check
                     avg_score = self._get_monte_carlo_score(shot, params, iterations=3, renderer=renderer)
 
                     if avg_score > best_safety_score:
@@ -111,7 +110,7 @@ class ShotPlanner:
         running a Monte Carlo evaluation on the valid physical executions.
         """
 
-        # 1. Get ONLY Direct and Plant shots from the generator
+        # Get ONLY Direct and Plant shots from the generator
         candidates = self.generator.get_all_shots()
 
         candidates.sort(key=lambda x: x.get("efficiency", 0), reverse=True)
@@ -127,13 +126,13 @@ class ShotPlanner:
 
         for idx, shot in enumerate(candidates):
 
-            # 2. Ask Numba solver for the exact aim angle for all Spin/Power combos
+            # Ask Numba solver for the exact aim angle for all Spin/Power combos
             valid_executions = self.optimizer.optimize_shot(shot, renderer)
 
             if not valid_executions:
                 continue
 
-            # 3. Loop through each valid variation (e.g. Center vs Topspin)
+            # Loop through each valid variation (e.g. Center vs Topspin)
             for exec_data in valid_executions:
                 params = (
                     exec_data["aim_angle"],
@@ -143,7 +142,7 @@ class ShotPlanner:
                     exec_data["elevation"]
                 )
 
-                # 4. Evaluate the shot via Monte Carlo error distribution
+                # Evaluate the shot via Monte Carlo error distribution
                 avg_score = self._get_monte_carlo_score(shot, params, iterations=4, renderer=renderer)
                 if avg_score > max_sequence_value:
                     max_sequence_value = avg_score
@@ -185,14 +184,13 @@ class ShotPlanner:
 
             self.sim.save_state()
 
-            # --- 1. PRE-SHOT VISUALIZATION (Draw Intended Path) ---
+            # PRE-SHOT VISUALIZATION (Draw Intended Path)
             if renderer:
                 import pygame
                 pygame.event.pump()
 
                 renderer.render(flip=False)
 
-                # === GEOMETRIC GENERATOR PATH (Drawn Underneath) ===
                 cb_pos_raw = self.sim.positions[0][:2]
                 gb_raw = shot.get("ghost_ball_pos")
 
@@ -213,9 +211,7 @@ class ShotPlanner:
                     pt1 = renderer.world_to_screen(ob_pos_raw)
                     pt2 = renderer.world_to_screen(target_pt_raw)
                     pygame.draw.line(renderer.screen, (255, 120, 0), pt1, pt2, 3)
-                # ===================================================
 
-                # === OPTIMIZED PHYSICS PATH (Drawn on Top) ===
                 # Calculate Intended Velocities (without noise)
                 vx_int = params[1] * np.cos(params[0])
                 vy_int = params[1] * np.sin(params[0])
@@ -241,7 +237,6 @@ class ShotPlanner:
                         pygame.draw.circle(renderer.screen, (200, 200, 255), (int(ghost_pos[0]), int(ghost_pos[1])),
                                            gb_radius, 1)
 
-                # === 3. NUMBA SOLVER PREDICTED PATH (Drawn in Green) ===
                 from planner.aim_solver import get_solver_trajectory
                 import math
 
@@ -274,13 +269,12 @@ class ShotPlanner:
                         gb_radius = int(self.sim.cb_radius * renderer.scale)
                         pygame.draw.circle(renderer.screen, (50, 255, 50),
                                            (int(math_ghost_pos[0]), int(math_ghost_pos[1])), gb_radius, 2)
-                # =======================================================
 
                 pygame.display.set_caption(f"MC {i + 1}/{iterations} | INTENDED PATH | PRESS SPACE TO SHOOT")
                 pygame.display.flip()
                 renderer.wait_for_space()
 
-            # --- 2. SINGLE EXECUTION (With Noise) ---
+            # SINGLE EXECUTION (With Noise)
             vx = n_power * np.cos(n_angle)
             vy = n_power * np.sin(n_angle)
 
@@ -304,7 +298,7 @@ class ShotPlanner:
             else:
                 shot_data = self.sim.run(until_first_coll=False)
 
-            # --- 3. SINGLE EVALUATION ---
+            # SINGLE EVALUATION
             temp_match = Match(self.sim, custom_setup=True)
             original_turn = temp_match.turn
             temp_match.player_colours[original_turn] = my_color
@@ -345,7 +339,7 @@ class ShotPlanner:
 
             cb_endpoints.append((self.sim.positions[0][:2].copy(), status))
 
-            # --- 4. POST-SHOT VISUALIZATION (Cloud) ---
+            # POST-SHOT VISUALIZATION (Cloud)
             if renderer:
                 print(f"      -> Result: {status.upper()} | Sub-Scores: {[round(i, 3) for i in iter_scores]}")
 
@@ -368,7 +362,7 @@ class ShotPlanner:
 
                 renderer.wait_for_space()
 
-            # --- 5. RESTORE STATE ---
+            # RESTORE STATE
             self.sim.load_state()
 
         if renderer:

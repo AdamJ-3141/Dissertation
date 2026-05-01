@@ -13,7 +13,8 @@ class Simulation:
                  cb_radius=CUE_BALL_RADIUS, cb_mass=CUE_BALL_MASS,
                  ob_radius=OBJECT_BALL_RADIUS, ob_mass=OBJECT_BALL_MASS,
                  mu_s=MU_S, mu_r=MU_R, mu_sp = MU_SP, mu_b = MU_B, e_c = E_C,
-                 mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T, start_break=False):
+                 mu_c=MU_C, k_n=K_N, beta_n=BETA_N, beta_t=BETA_T, start_break=False,
+                 cushion_line_segments=None, cushion_circles=None, pockets=None):
 
         self._saved_in_play = None
         self._saved_positions = None
@@ -37,44 +38,53 @@ class Simulation:
         self.beta_t = beta_t  # Tangential mass-matrix coefficient (1 + mR^2/I = 1 + 2.5 = 3.5)
 
         # Table Geometry
-        self.line_segments = [
-            ((0.1346, 0.4572), (0.8147, 0.4572)),
-            ((0.868785228149406, 0.474264), (0.924562160209359, 0.5162)),
-            ((0.0499787766576, 0.5162122073954), (0.078405956002, 0.4826978086535)),
-            ((0.1346, -0.4572), (0.8147, -0.4572)),
-            ((0.868785228149406, -0.474264), (0.924562160209359, -0.5162)),
-            ((0.0499787766576, -0.5162122073954), (0.078405956002, -0.4826978086535)),
-            ((-0.1346, 0.4572), (-0.8147, 0.4572)),
-            ((-0.868785228149406, 0.474264), (-0.924562160209359, 0.5162)),
-            ((-0.0499787766576, 0.5162122073954), (-0.078405956002, 0.4826978086535)),
-            ((-0.1346, -0.4572), (-0.8147, -0.4572)),
-            ((-0.868785228149406, -0.474264), (-0.924562160209359, -0.5162)),
-            ((-0.0499787766576, -0.5162122073954), (-0.078405956002, -0.4826978086535)),
-            ((0.9144, -0.3575), (0.9144, 0.3575)),
-            ((0.932464, 0.41158522815), (0.9744, 0.467362160211)),
-            ((0.932464, -0.41158522815), (0.9744, -0.467362160211)),
-            ((-0.9144, -0.3575), (-0.9144, 0.3575)),
-            ((-0.932464, 0.41158522815), (-0.9744, 0.467362160211)),
-            ((-0.932464, -0.41158522815), (-0.9744, -0.467362160211))
-        ]
+        if cushion_line_segments is None:
+            self.line_segments = [
+                ((0.1346, 0.4572), (0.8147, 0.4572)),
+                ((0.868785228149406, 0.474264), (0.924562160209359, 0.5162)),
+                ((0.0499787766576, 0.5162122073954), (0.078405956002, 0.4826978086535)),
+                ((0.1346, -0.4572), (0.8147, -0.4572)),
+                ((0.868785228149406, -0.474264), (0.924562160209359, -0.5162)),
+                ((0.0499787766576, -0.5162122073954), (0.078405956002, -0.4826978086535)),
+                ((-0.1346, 0.4572), (-0.8147, 0.4572)),
+                ((-0.868785228149406, 0.474264), (-0.924562160209359, 0.5162)),
+                ((-0.0499787766576, 0.5162122073954), (-0.078405956002, 0.4826978086535)),
+                ((-0.1346, -0.4572), (-0.8147, -0.4572)),
+                ((-0.868785228149406, -0.474264), (-0.924562160209359, -0.5162)),
+                ((-0.0499787766576, -0.5162122073954), (-0.078405956002, -0.4826978086535)),
+                ((0.9144, -0.3575), (0.9144, 0.3575)),
+                ((0.932464, 0.41158522815), (0.9744, 0.467362160211)),
+                ((0.932464, -0.41158522815), (0.9744, -0.467362160211)),
+                ((-0.9144, -0.3575), (-0.9144, 0.3575)),
+                ((-0.932464, 0.41158522815), (-0.9744, 0.467362160211)),
+                ((-0.932464, -0.41158522815), (-0.9744, -0.467362160211))
+            ]
+        else:
+            self.line_segments = cushion_line_segments
 
-        self.circles = [
-            (1.0044, 0.3575, 0.09), (1.0044, -0.3575, 0.09),
-            (-1.0044, 0.3575, 0.09), (-1.0044, -0.3575, 0.09),
-            (0.8147, 0.5472, 0.09), (0.1346, 0.5322, 0.075),
-            (0.8147, -0.5472, 0.09), (0.1346, -0.5322, 0.075),
-            (-0.8147, 0.5472, 0.09), (-0.1346, 0.5322, 0.075),
-            (-0.8147, -0.5472, 0.09), (-0.1346, -0.5322, 0.075)
-        ]
+        if cushion_circles is None:
+            self.circles = [
+                (1.0044, 0.3575, 0.09), (1.0044, -0.3575, 0.09),
+                (-1.0044, 0.3575, 0.09), (-1.0044, -0.3575, 0.09),
+                (0.8147, 0.5472, 0.09), (0.1346, 0.5322, 0.075),
+                (0.8147, -0.5472, 0.09), (0.1346, -0.5322, 0.075),
+                (-0.8147, 0.5472, 0.09), (-0.1346, 0.5322, 0.075),
+                (-0.8147, -0.5472, 0.09), (-0.1346, -0.5322, 0.075)
+            ]
+        else:
+            self.circles = cushion_circles
 
-        self.pockets = [
-            (-CORNER_POCKET_X, CORNER_POCKET_Y, POCKET_RADIUS),  # Top Left
-            (0.0, MIDDLE_POCKET_Y, POCKET_RADIUS),  # Top Middle
-            (CORNER_POCKET_X, CORNER_POCKET_Y, POCKET_RADIUS),  # Top Right
-            (-CORNER_POCKET_X, -CORNER_POCKET_Y, POCKET_RADIUS),  # Bottom Left
-            (0.0, -MIDDLE_POCKET_Y, POCKET_RADIUS),  # Bottom Middle
-            (CORNER_POCKET_X, -CORNER_POCKET_Y, POCKET_RADIUS)  # Bottom Right
-        ]
+        if pockets is None:
+            self.pockets = [
+                (-CORNER_POCKET_X, CORNER_POCKET_Y, POCKET_RADIUS),  # Top Left
+                (0.0, MIDDLE_POCKET_Y, POCKET_RADIUS),  # Top Middle
+                (CORNER_POCKET_X, CORNER_POCKET_Y, POCKET_RADIUS),  # Top Right
+                (-CORNER_POCKET_X, -CORNER_POCKET_Y, POCKET_RADIUS),  # Bottom Left
+                (0.0, -MIDDLE_POCKET_Y, POCKET_RADIUS),  # Bottom Middle
+                (CORNER_POCKET_X, -CORNER_POCKET_Y, POCKET_RADIUS)  # Bottom Right
+            ]
+        else:
+            self.pockets = pockets
 
         # State arrays
         self.positions = np.zeros((1 + n_obj_balls, 2), dtype=np.float64)
@@ -196,12 +206,12 @@ class Simulation:
             [BLACK_SPOT_X, 0.0],
         ])
 
-        # 3. Generate a microscopic random jitter
+        # Generate a microscopic random jitter
         jitter = np.zeros_like(base_positions)
         jitter_magnitude = 5e-5
         jitter[1:] = (np.random.rand(15, 2) - 0.5) * jitter_magnitude
 
-        # 4. Add a tiny bias pushing them slightly away from the apex
+        # Add a tiny bias pushing them slightly away from the apex
         for i in range(1, 16):
             direction_from_apex = base_positions[i] - base_positions[1]
             dist = np.linalg.norm(direction_from_apex)
@@ -212,7 +222,7 @@ class Simulation:
 
         self.is_break = True
 
-        # 5. Reset the engine with the matched WEPF color array
+        # Reset the engine with the matched WEPF color array
         self.reset(
             final_positions,
             np.array([0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 3])
@@ -290,7 +300,7 @@ class Simulation:
         # Exact physics distance + microscopic 1e-5 gap
         safe_dist = (self.radii[1] * 2.0) + 1e-5
 
-        # 2. Place Object Balls
+        # Place Object Balls
         placed = 0
         while placed < num_balls:
             idx = placed + 1
@@ -343,7 +353,7 @@ class Simulation:
             # Note: If it hits 50 steps without resolving, it means it got trapped in a weird corner.
             # The while loop will safely ignore it and generate a fresh random coordinate for this ball.
 
-        # 3. Initial physics prediction
+        # Initial physics prediction
         mask = self.in_play.copy()
         self.predict_cushion_collision_events(mask)
         self.predict_pot_events(mask)
@@ -420,7 +430,7 @@ class Simulation:
                       topspin_offset: float = 0.0, sidespin_offset: float = 0.0,
                       elevation_deg: float = 0.0):
 
-        # 1. Base directions
+        # Base directions
         speed = np.hypot(velocity_x, velocity_y)
         if speed < 1e-6:
             return False
@@ -442,17 +452,11 @@ class Simulation:
 
         cue_x, cue_y = self.positions[0]
 
-        # ==========================================
-        # 2. THE SHIFTED RAY ORIGIN
-        # ==========================================
         ray_x = cue_x + sidespin_shift * rx
         ray_y = cue_y + sidespin_shift * ry
 
         d = np.inf
 
-        # ==========================================
-        # 3a. Raycast against Line Segments
-        # ==========================================
         for (p1, p2) in self.line_segments:
             x1, y1 = p1
             x2, y2 = p2
@@ -467,7 +471,6 @@ class Simulation:
             px = ray_x - x1
             py = ray_y - y1
 
-            # FIX: Flipped signs in the numerators for true distance
             t = (py * dx - px * dy) / denominator
             u = (py * cue_dir_x - px * cue_dir_y) / denominator
 
@@ -477,10 +480,6 @@ class Simulation:
                 elif t > -r_c:
                     d = 0.0
 
-        # ==========================================
-        # 3b. Raycast against Circular Cushion Knuckles
-        # ==========================================
-        # (This math was completely flawless!)
         for (cx, cy, cr) in self.circles:
             vx = ray_x - cx
             vy = ray_y - cy
@@ -500,13 +499,10 @@ class Simulation:
                 elif 1e-6 < t2 < d:
                     d = t2
 
-        # ==========================================
-        # 4. Restriction from cushion
-        # ==========================================
         theta = np.radians(elevation_deg)
         min_tip_y = -1.0  # Default to no restriction
 
-        # FIX: Only apply the cushion restriction if it is physically reachable by the stick
+        # Only apply the cushion restriction if it is physically reachable by the stick
         if not np.isinf(d) and d < CUE_LENGTH:
             y_blocked = r_c + (CUSHION_HEIGHT_ACTUAL - r_c) * np.cos(theta) - d * np.sin(theta)
             safe_height = y_blocked + CUE_RADIUS  # Swapped to CUE_RADIUS to match the ball logic below
@@ -518,11 +514,6 @@ class Simulation:
                 # print(f"Shot Rejected: Cushion blocking cue. Min tip y: {min_tip_y:.3f},",
                 #        "Attempted: {topspin_offset:.3f}")
                 return False
-
-        # ==========================================
-        # 5. Restriction from balls
-        # ==========================================
-        # (Removed redundant vector recalculations)
 
         for i in range(1, len(self.positions)):
             if not self.in_play[i] or self.ball_states[i] == "POTTED":
@@ -550,9 +541,7 @@ class Simulation:
                     if min_tip_y_ball > min_tip_y:
                         min_tip_y = min_tip_y_ball
 
-        # ==========================================
         # Final Validation
-        # ==========================================
         if topspin_offset < min_tip_y:
             # print(f"Shot Rejected: Cue blocked by balls. Min tip y: {min_tip_y:.3f}, "
             #       f"Attempted: {topspin_offset:.3f}")
@@ -569,14 +558,14 @@ class Simulation:
 
     def strike_cue_ball(self, velocity_x: float, velocity_y: float,
                         topspin_offset: float = 0.0, sidespin_offset: float = 0.0,
-                        elevation_deg: float = 0.0):
+                        elevation_deg: float = 0.0, force=False):
         """
         topspin_offset: Vertical tip offset fraction [-1.0 (bottom/draw) to 1.0 (top/follow)].
         sidespin_offset: Horizontal tip offset fraction [-1.0 (left english) to 1.0 (right english)].
         elevation_deg: Cue elevation angle in degrees.
         """
 
-        if not self.validate_shot(velocity_x, velocity_y, topspin_offset, sidespin_offset, elevation_deg):
+        if not force and not self.validate_shot(velocity_x, velocity_y, topspin_offset, sidespin_offset, elevation_deg):
             return False
 
         v_input = np.array([velocity_x, velocity_y], dtype=np.float64)
@@ -692,7 +681,7 @@ class Simulation:
         final_mask = ball_mask & rolling_mask & moving_mask
         valid_indices = np.where(final_mask)[0]
 
-        # 3. Calculate time to stop and queue events
+        # Calculate time to stop and queue events
         for i in valid_indices:
             # Time to stop: t = 7/5 * |v| / (mu_r * g)
             delta_t = (7.0 / 5.0) * v_norm[i] / (self.mu_r * g)
@@ -882,7 +871,7 @@ class Simulation:
         restitution = RESTITUTION
         j_n = -(1.0 + restitution) * v_rel_n / ((1.0 / m1) + (1.0 / m2))
 
-        # 5. Tangential Impulse (Friction & Spin transfer)
+        # Tangential Impulse (Friction & Spin transfer)
         # Isolate the tangential vector component
         v_rel_t_vec = v_rel - (v_rel_n * n_hat_3d)
         v_rel_t_norm = np.linalg.norm(v_rel_t_vec)
@@ -906,10 +895,10 @@ class Simulation:
             # The tangential impulse vector opposes the relative tangential velocity
             j_t_vec = -j_t * t_hat
 
-        # 6. Total Impulse Vector
+        # Total Impulse Vector
         J_total = (j_n * n_hat_3d) + j_t_vec
 
-        # 7. Apply Impulses to State
+        # Apply Impulses to State
         # Linear velocity (extract x, y)
         self.velocities[i] -= (J_total[:2] / m1)
         self.velocities[j] += (J_total[:2] / m2)
@@ -918,18 +907,15 @@ class Simulation:
         self.angular[i] -= np.cross(r1_vec, J_total) / I1
         self.angular[j] += np.cross(r2_vec, J_total) / I2
 
-        # 8. Update Engine State
+        # Update Engine State
         # Any collision violently alters trajectory, ensuring they enter a sliding phase
         self.ball_states[i] = "SLIDING"
         self.ball_states[j] = "SLIDING"
         self.shot_data["event_history"].append(("ball", i, j))
 
 
-        # ==========================================
         # POSITIONAL CORRECTION
-        # ==========================================
         # Push the balls apart so they are no longer touching.
-        # This prevents the solver from getting stuck in an infinite 0.0s collision loop.
         dp = self.positions[i] - self.positions[j]
         dist = np.linalg.norm(dp)
 
@@ -951,7 +937,7 @@ class Simulation:
         self.ball_versions[i] += 1
         self.ball_versions[j] += 1
 
-        # 9. Predict the new future for these two balls
+        # Predict the new future for these two balls
         mask = np.zeros(1 + self.n_obj_balls, dtype=bool)
         mask[i] = True
         mask[j] = True
@@ -982,7 +968,7 @@ class Simulation:
 
             valid_times = []
 
-            # 1. Check Line Segments (No distance filter!)
+            # Check Line Segments (No distance filter!)
             for idx, (p1, p2) in enumerate(self.line_segments):
                 P1 = np.array(p1)
                 P2 = np.array(p2)
@@ -1010,7 +996,7 @@ class Simulation:
                             if 0 <= projection <= L:
                                 valid_times.append((t, ('line', idx)))
 
-            # 2. Check Corner Circles (No distance filter!)
+            # Check Corner Circles (No distance filter!)
             for idx, (cx, cy, cr) in enumerate(self.circles):
                 Pc = np.array([cx, cy])
                 dp = P0 - Pc
@@ -1030,7 +1016,7 @@ class Simulation:
                     if t > 1e-6:
                         valid_times.append((t, ('circle', idx)))
 
-            # 3. Queue the Earliest Event
+            # Queue the Earliest Event
             if valid_times:
                 time_to_impact, target = min(valid_times, key=lambda x: x[0])
                 event_t = self.time + time_to_impact
@@ -1061,9 +1047,7 @@ class Simulation:
         R = self.radii[i]
         m = self.cb_mass if i == 0 else self.ob_mass
 
-        # ==========================================
-        # 1. Determine the Collision Normal (n_hat)
-        # ==========================================
+        # Determine the Collision Normal (n_hat)
 
         n_hat = np.empty((1,2), dtype=float)
 
@@ -1085,9 +1069,7 @@ class Simulation:
 
         n_3d = np.array([n_hat[0], n_hat[1], 0.0])
 
-        # ==========================================
-        # 2. Calculate 3D Contact Surface Velocity
-        # ==========================================
+        # Calculate 3D Contact Surface Velocity
         # Convert ball velocity to 3D
         v_3d = np.array([V_ball[0], V_ball[1], 0.0])
 
@@ -1097,9 +1079,8 @@ class Simulation:
         # True velocity of the ball's surface at the point of impact
         v_contact = v_3d + np.cross(W_ball, r_contact)
 
-        # ==========================================
-        # 3. Decompose into Normal and Tangent Vectors
-        # ==========================================
+        # Decompose into Normal and Tangent Vectors
+
         # Normal component
         v_n_0 = np.dot(v_contact, n_3d)
 
@@ -1121,7 +1102,7 @@ class Simulation:
             v_t_0 = 0.0
 
         # ==========================================
-        # 4. Apply Stronge's Compliant Impact Model
+        # Apply Stronge's Compliant Impact Model
         # ==========================================
         eta_squared = (self.beta_t / self.beta_n) / (1.7 ** 2)
 
@@ -1150,9 +1131,6 @@ class Simulation:
             eta_squared=eta_squared
         )
 
-        # ==========================================
-        # 5. Apply the Velocity Deltas
-        # ==========================================
         # Calculate the change in velocity according to the mass-matrix coefficients
         Dv_n = (v_n_f - v_n_0) / self.beta_n
         Dv_t = (v_t_f - v_t_0) / self.beta_t
@@ -1166,9 +1144,7 @@ class Simulation:
         delta_w = (2.5 / R) * np.cross(-n_3d, Dv_t * t_3d)
         self.angular[i] += delta_w
 
-        # ==========================================
-        # 6. Update Engine State
-        # ==========================================
+        # Update Engine State
         self.ball_states[i] = "SLIDING"
         self.ball_versions[i] += 1
 

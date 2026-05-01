@@ -93,7 +93,7 @@ class ShotGenerator:
             for pocket_idx, pocket_pts in enumerate(pocket_targets_list):
                 for pt_idx, target_pt in enumerate(pocket_pts):
 
-                    # 1. Check OB to Pocket Path (Strict width)
+                    # Check OB to Pocket Path (Strict width)
                     if self._is_path_blocked(target_pos, target_pt, OBJECT_BALL_RADIUS, ignore_indices=[target_idx]):
                         continue
 
@@ -114,7 +114,7 @@ class ShotGenerator:
                     dist_aim = np.hypot(dx_aim, dy_aim)
                     if dist_aim == 0: continue
 
-                    # 2. Check CB to GB Path (Slightly reduced width for swerve)
+                    # Check CB to GB Path (Slightly reduced width for swerve)
                     if self._is_path_blocked(cue_ball_pos, gb_pos, CUE_BALL_RADIUS * 0.85,
                                              ignore_indices=[0, target_idx]):
                         continue
@@ -124,13 +124,11 @@ class ShotGenerator:
 
                     efficiency = (dir_aim_x * dir_pot_x) + (dir_aim_y * dir_pot_y)
 
-                    # 3. DYNAMIC DIFFICULTY CULLING (Sliding Scale)
-                    # Absolute physical maximum cut is 85 degrees
-                    # We subtract 10 degrees of acceptable cut for every 1 meter of total travel distance
+                    # DYNAMIC DIFFICULTY CULLING (Sliding Scale)
                     total_dist = dist_aim + dist_pot
                     dynamic_max_angle = 85.0 - (total_dist * 15.0)
 
-                    # Clamp it so the AI will always at least consider a 60-degree cut, no matter the distance
+                    # Clamp it so the AI will always at least consider a 60-degree cut
                     dynamic_max_angle = max(60.0, dynamic_max_angle)
 
                     # Convert the dynamic angle limit to an efficiency dot-product
@@ -162,7 +160,7 @@ class ShotGenerator:
         start_x, start_y = start_pos[0], start_pos[1]
         end_x, end_y = end_pos[0], end_pos[1]
 
-        # 1. Check for ball obstructions
+        # Check for ball obstructions
         for i in range(1, self.main_sim.n_obj_balls + 1):
             if i in ignore_indices or not self.main_sim.in_play[i]:
                 continue
@@ -177,7 +175,7 @@ class ShotGenerator:
             ):
                 return True
 
-        # 2. Check for pocket knuckle obstructions
+        # Check for pocket knuckle obstructions
         for cx, cy, cr in self.main_sim.circles:
             # The moving path is the ball, the obstacle is the knuckle's radius
             if check_path_obstruction(
@@ -197,7 +195,7 @@ class ShotGenerator:
         start_x, start_y = start_pos[0], start_pos[1]
         end_x, end_y = end_pos[0], end_pos[1]
 
-        # 1. Check for ball obstructions
+        # Check for ball obstructions
         for i in range(1, self.main_sim.n_obj_balls + 1):
             if i in ignore_indices or not self.main_sim.in_play[i]:
                 continue
@@ -211,7 +209,7 @@ class ShotGenerator:
             ):
                 return True
 
-        # 2. Check for pocket knuckle obstructions
+        # Check for pocket knuckle obstructions
         for cx, cy, cr in self.main_sim.circles:
             if check_path_obstruction(
                     start_x, start_y, end_x, end_y,
@@ -229,7 +227,7 @@ class ShotGenerator:
         start_x, start_y = start_pos[0], start_pos[1]
         end_x, end_y = end_pos[0], end_pos[1]
 
-        # 1. Check for ball obstructions
+        # Check for ball obstructions
         for i in range(1, self.main_sim.n_obj_balls + 1):
             if i in ignore_indices or not self.main_sim.in_play[i]:
                 continue
@@ -393,11 +391,10 @@ class ShotGenerator:
             for pocket_idx, pocket_pts in enumerate(pocket_targets_list):
                 for pt_idx, target_pt in enumerate(pocket_pts):
 
-                    # --- PATH CULLING 1: Target Ball to Pocket ---
                     if self._is_path_blocked(target_pos, target_pt, OBJECT_BALL_RADIUS, ignore_indices=[target_idx]):
                         continue
 
-                    # 1. Target Ball Potting Vector
+                    # Target Ball Potting Vector
                     dx_pot = target_pt[0] - target_pos[0]
                     dy_pot = target_pt[1] - target_pos[1]
                     dist_pot = np.hypot(dx_pot, dy_pot)
@@ -410,14 +407,14 @@ class ShotGenerator:
                     gb1_y = target_pos[1] - (dir_pot_y * self.ghost_distance)
                     gb1_pos = (gb1_x, gb1_y)
 
-                    # 2. Iterate through all other balls to act as the Combo Ball
+                    # Iterate through all other balls to act as the Combo Ball
                     for combo_idx in self.target_set:
                         if combo_idx == target_idx or not self.main_sim.in_play[combo_idx]:
                             continue
 
                         combo_pos = positions[combo_idx]
 
-                        # --- PATH CULLING 2: Combo Ball to GB1 ---
+                        # PATH CULLING 2: Combo Ball to GB1
                         # Ignore the Target Ball (target_idx) as it is the destination of this path
                         if self._is_path_blocked(combo_pos, gb1_pos, OBJECT_BALL_RADIUS,
                                                  ignore_indices=[combo_idx, target_idx]):
@@ -441,7 +438,7 @@ class ShotGenerator:
                         gb2_y = combo_pos[1] - (dir_c_gb1_y * self.ghost_distance)
                         gb2_pos = (gb2_x, gb2_y)
 
-                        # --- PATH CULLING 3: Cue Ball to GB2 ---
+                        # PATH CULLING 3: Cue Ball to GB2
                         # Use CUE_BALL_RADIUS * 0.85 for swerve allowance
                         if self._is_path_blocked(cue_ball_pos, gb2_pos, CUE_BALL_RADIUS * 0.85,
                                                  ignore_indices=[0, combo_idx]):
